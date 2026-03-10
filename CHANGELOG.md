@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.0] - 2026-03-10
+
+### Added
+- Multi-GPU detection and distribution via `device_map="auto"` (accelerate)
+- `DistributionMode` enum: `NONE`, `DEVICE_MAP_AUTO`
+- Multi-GPU strategy tier: distribute → FP8 + distribute → distribute + CPU offload
+- `num_gpus`, `gpu_names`, `gpu_vram_gbs`, `total_gpu_vram_gb` fields on HardwareProfile
+- `distribution` and `num_gpus_used` fields on Strategy
+- Expanded model benchmark: 25 models including Nemotron-4 340B, NVLM-D-72B, VILA, Parakeet, Canary
+- GPUs column and MULTI-GPU status in benchmark output
+- 19 new multi-GPU tests (44 total)
+
+### Security
+- Added input validation: `model_size` rejects negative/zero values
+- Added `--trust-remote-code` warning in CLI
+- Replaced `__import__("subprocess")` with standard import
+- Added upper-bound version constraints on core dependencies
+
+### Changed
+- `effective_memory_gb` now uses `total_gpu_vram_gb` for multi-GPU systems
+- `_max_memory_map()` loops through all GPUs for per-GPU memory allocation
+- `_detect_cuda()` detects all GPUs, uses smallest VRAM for conservative allocation
+
 ## [0.2.1] - 2026-03-10
 
 ### Added

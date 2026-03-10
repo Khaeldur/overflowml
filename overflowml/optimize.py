@@ -7,7 +7,7 @@ import logging
 from typing import Any, Optional
 
 from .detect import Accelerator, HardwareProfile, detect_hardware
-from .strategy import OffloadMode, QuantMode, Strategy, pick_strategy
+from .strategy import DistributionMode, OffloadMode, QuantMode, Strategy, pick_strategy
 
 logger = logging.getLogger("overflowml")
 

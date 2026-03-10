@@ -9,7 +9,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from .detect import detect_hardware
-from .strategy import OffloadMode, pick_strategy
+from .strategy import DistributionMode, OffloadMode, pick_strategy
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
 
     # --- plan
     plan = sub.add_parser("plan", help="Plan optimal loading strategy for a model")
-    plan.add_argument("model_size", type=float, help="Model size in GB (BF16 weights)")
+    plan.add_argument("model_size", type=float, help="Model size in GB (BF16 weights, must be > 0)")
     plan.add_argument("--fast", action="store_true", help="Prefer speed over VRAM savings")
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
 
@@ -43,6 +43,9 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.command == "plan" and args.model_size <= 0:
+        parser.error("model size must be positive")
 
     if args.command == "detect":
         hw = detect_hardware()
@@ -83,6 +86,9 @@ def main():
         _run_benchmark(args)
 
     elif args.command == "load":
+        if args.trust_remote_code:
+            print("WARNING: --trust-remote-code downloads and executes arbitrary Python "
+                  "code from the model repository. Only use with models you trust.")
         from .transformers_ext import load_model
         model, tok = load_model(
             args.model_name,
@@ -119,15 +125,34 @@ def main():
 
 
 POPULAR_MODELS = [
+    # Consumer LLMs
     ("Llama-3.2-1B", 2.5),
     ("Llama-3.2-3B", 6.5),
+    ("Nemotron-Mini-4B", 8),
     ("Mistral-7B / Llama-3-8B", 16),
+    ("Minitron-8B", 16),
+    ("Nemotron-Nano-9B", 18),
     ("Llama-3.1-13B", 26),
-    ("Mixtral-8x7B", 93),
+    # Multi-GPU LLMs
+    ("Nemotron-3 Nano 30B (MoE)", 60),
+    ("Mixtral-8x7B (MoE)", 93),
     ("Llama-3-70B", 140),
+    ("NVLM-D-72B (Vision)", 156),
+    ("Mixtral-8x22B (MoE)", 280),
+    ("Nemotron-4-340B", 680),
+    ("Llama-3.1-405B", 810),
+    # Diffusers
     ("SDXL (diffusers)", 7),
     ("FLUX.1-dev (diffusers)", 24),
     ("Qwen-Image-Edit (diffusers)", 34),
+    # Voice/Speech (NeMo)
+    ("Parakeet-0.6B (ASR)", 1.2),
+    ("Canary-1B (ASR)", 2),
+    # Vision
+    ("VILA-3B (Vision)", 6),
+    ("VILA-8B (Vision)", 16),
+    ("VILA-13B (Vision)", 26),
+    ("VILA-40B (Vision)", 80),
 ]
 
 
@@ -143,7 +168,7 @@ def _run_benchmark(args):
             models.append((f"Custom ({size:.0f}GB)", size))
 
     name_w = max(len(m[0]) for m in models)
-    header = f"{'Model':<{name_w}}  {'Size':>6}  {'Strategy':<20}  {'VRAM':>7}  {'Status'}"
+    header = f"{'Model':<{name_w}}  {'Size':>6}  {'Strategy':<24}  {'GPUs':>4}  {'VRAM':>8}  {'Status'}"
     print(header)
     print("-" * len(header))
 
@@ -154,6 +179,8 @@ def _run_benchmark(args):
         parts = []
         if s.quantization.value != "none":
             parts.append(s.quantization.value.upper())
+        if s.distribution != DistributionMode.NONE:
+            parts.append(f"auto ({s.num_gpus_used} GPUs)")
         if s.offload.value != "none":
             parts.append(s.offload.value.replace("_", " "))
         if s.compile:
@@ -162,7 +189,11 @@ def _run_benchmark(args):
 
         # Status
         if s.warnings:
-            status = "!! " + s.warnings[0][:50]
+            status = "!! " + s.warnings[0][:40]
+        elif s.distribution != DistributionMode.NONE and s.offload != OffloadMode.NONE:
+            status = "MULTI-GPU + OFFLOAD"
+        elif s.distribution != DistributionMode.NONE:
+            status = "MULTI-GPU"
         elif s.offload == OffloadMode.NONE:
             status = "FAST"
         elif s.offload == OffloadMode.MODEL_CPU:
@@ -172,11 +203,12 @@ def _run_benchmark(args):
         else:
             status = "VERY SLOW (disk)"
 
+        gpus_str = str(s.num_gpus_used)
         vram_str = f"{s.estimated_vram_gb:.1f}GB"
-        print(f"{name:<{name_w}}  {size_gb:>5.0f}G  {strategy_label:<20}  {vram_str:>7}  {status}")
+        print(f"{name:<{name_w}}  {size_gb:>5.0f}G  {strategy_label:<24}  {gpus_str:>4}  {vram_str:>8}  {status}")
 
     print()
-    print("Legend: FAST = fits in VRAM | OK = CPU offload | SLOW = layer-by-layer")
+    print("Legend: FAST = fits in VRAM | MULTI-GPU = distributed | OK = CPU offload | SLOW = layer-by-layer")
     print("Run: overflowml plan <size_gb>  for detailed strategy")
     print()
 

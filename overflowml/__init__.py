@@ -1,9 +1,9 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 from .detect import detect_hardware, HardwareProfile
-from .strategy import pick_strategy, Strategy
+from .strategy import pick_strategy, Strategy, DistributionMode
 from .optimize import optimize_pipeline, optimize_model, MemoryGuard
 
 def load_model(*args, **kwargs):

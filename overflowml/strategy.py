@@ -24,10 +24,17 @@ class QuantMode(Enum):
     GGUF = "gguf"           # llama.cpp quantization
 
 
+class DistributionMode(Enum):
+    NONE = "none"                  # Single GPU
+    DEVICE_MAP_AUTO = "auto"       # accelerate distributes layers across GPUs
+
+
 @dataclass
 class Strategy:
     offload: OffloadMode = OffloadMode.NONE
     quantization: QuantMode = QuantMode.NONE
+    distribution: DistributionMode = DistributionMode.NONE
+    num_gpus_used: int = 1
     dtype: str = "bfloat16"
     compile: bool = False
     compile_mode: str = "max-autotune"
@@ -41,6 +48,8 @@ class Strategy:
 
     def summary(self) -> str:
         parts = []
+        if self.distribution != DistributionMode.NONE:
+            parts.append(f"Distribution: {self.distribution.value} ({self.num_gpus_used} GPUs)")
         if self.quantization != QuantMode.NONE:
             parts.append(f"Quantization: {self.quantization.value}")
         parts.append(f"Offload: {self.offload.value}")
@@ -126,7 +135,7 @@ def pick_strategy(
             s.compile = True
         return s
 
-    # Can FP8 make it fit?
+    # Can FP8 make it fit on single GPU?
     fp8_size = model_size_gb * 0.55  # FP8 ≈ 55% of BF16
     if allow_quantization and hw.supports_fp8 and fp8_size * 1.15 <= vram:
         s.quantization = QuantMode.FP8
@@ -136,6 +145,41 @@ def pick_strategy(
         if prefer_speed:
             s.compile = True
         return s
+
+    # --- Multi-GPU distribution (before CPU offload) ---
+    if hw.num_gpus > 1:
+        total_vram = hw.total_gpu_vram_gb
+
+        # Model fits across all GPUs at full precision?
+        if model_size_gb * 1.15 <= total_vram:
+            s.distribution = DistributionMode.DEVICE_MAP_AUTO
+            s.num_gpus_used = hw.num_gpus
+            s.estimated_vram_gb = model_size_gb * 1.15 / hw.num_gpus
+            s.notes.append(f"Distributed across {hw.num_gpus} GPUs ({vram:.0f}GB each)")
+            if prefer_speed:
+                s.compile = True
+            return s
+
+        # Model fits across GPUs with FP8?
+        if allow_quantization and hw.supports_fp8 and fp8_size * 1.15 <= total_vram:
+            s.quantization = QuantMode.FP8
+            s.distribution = DistributionMode.DEVICE_MAP_AUTO
+            s.num_gpus_used = hw.num_gpus
+            s.estimated_vram_gb = fp8_size * 1.15 / hw.num_gpus
+            s.notes.append(f"FP8 + distributed across {hw.num_gpus} GPUs")
+            if prefer_speed:
+                s.compile = True
+            return s
+
+        # Multi-GPU + CPU offload
+        if ram >= model_size_gb * 1.3:
+            s.distribution = DistributionMode.DEVICE_MAP_AUTO
+            s.num_gpus_used = hw.num_gpus
+            s.offload = OffloadMode.MODEL_CPU
+            s.estimated_vram_gb = model_size_gb * 0.7 / hw.num_gpus
+            s.gc_between_steps = True
+            s.notes.append(f"Distributed + CPU offload across {hw.num_gpus} GPUs + RAM")
+            return s
 
     # Need CPU offload — but can model_cpu_offload handle it?
     if model_size_gb <= vram * 1.5 and ram >= model_size_gb * 1.3:

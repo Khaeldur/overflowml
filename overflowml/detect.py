@@ -30,6 +30,15 @@ class HardwareProfile:
     supports_bf16: bool = False
     supports_fp8: bool = False
     extra: dict = field(default_factory=dict)
+    # Multi-GPU fields
+    num_gpus: int = 1
+    gpu_names: list[str] = field(default_factory=list)
+    gpu_vram_gbs: list[float] = field(default_factory=list)
+    total_gpu_vram_gb: float = 0.0
+
+    def __post_init__(self):
+        if self.total_gpu_vram_gb == 0.0 and self.gpu_vram_gb > 0:
+            self.total_gpu_vram_gb = self.gpu_vram_gb
 
     @property
     def overflow_gb(self) -> float:
@@ -43,11 +52,13 @@ class HardwareProfile:
         """Total memory available for model loading."""
         if self.unified_memory:
             return self.system_ram_gb * 0.75  # macOS reserves ~25%
-        return self.gpu_vram_gb + self.overflow_gb
+        return self.total_gpu_vram_gb + self.overflow_gb
 
     def summary(self) -> str:
         lines = [f"Accelerator: {self.accelerator.value}"]
-        if self.gpu_name:
+        if self.num_gpus > 1:
+            lines.append(f"GPUs: {self.num_gpus}x {self.gpu_name} ({self.gpu_vram_gb:.0f}GB each, {self.total_gpu_vram_gb:.0f}GB total)")
+        elif self.gpu_name:
             lines.append(f"GPU: {self.gpu_name} ({self.gpu_vram_gb:.0f}GB VRAM)")
         lines.append(f"System RAM: {self.system_ram_gb:.0f}GB")
         if self.unified_memory:
@@ -64,8 +75,21 @@ def _detect_cuda() -> Optional[HardwareProfile]:
         if not torch.cuda.is_available():
             return None
 
-        props = torch.cuda.get_device_properties(0)
-        cc = (props.major, props.minor)
+        num_gpus = torch.cuda.device_count()
+        gpu_names = []
+        gpu_vram_gbs = []
+        compute_caps = []
+
+        for i in range(num_gpus):
+            props = torch.cuda.get_device_properties(i)
+            gpu_names.append(props.name)
+            gpu_vram_gbs.append(props.total_memory / (1024 ** 3))
+            compute_caps.append((props.major, props.minor))
+
+        # Use first GPU for primary fields (backward compat)
+        # gpu_vram_gb = smallest GPU (conservative for balanced allocation)
+        primary_cc = compute_caps[0]
+        min_vram = min(gpu_vram_gbs)
 
         import psutil
         ram_gb = psutil.virtual_memory().total / (1024 ** 3)
@@ -79,15 +103,19 @@ def _detect_cuda() -> Optional[HardwareProfile]:
 
         return HardwareProfile(
             accelerator=Accelerator.CUDA,
-            gpu_name=props.name,
-            gpu_vram_gb=props.total_memory / (1024 ** 3),
-            gpu_compute_capability=cc,
+            gpu_name=gpu_names[0],
+            gpu_vram_gb=min_vram,
+            gpu_compute_capability=primary_cc,
             system_ram_gb=ram_gb,
             unified_memory=False,
             os=platform.system(),
             cpu_cores=psutil.cpu_count(logical=False) or 1,
-            supports_bf16=cc >= (8, 0),  # Ampere+
+            supports_bf16=all(cc >= (8, 0) for cc in compute_caps),
             supports_fp8=supports_fp8,
+            num_gpus=num_gpus,
+            gpu_names=gpu_names,
+            gpu_vram_gbs=gpu_vram_gbs,
+            total_gpu_vram_gb=sum(gpu_vram_gbs),
         )
     except ImportError:
         return None
@@ -104,7 +132,8 @@ def _detect_mps() -> Optional[HardwareProfile]:
 
         gpu_name = "Apple Silicon"
         try:
-            result = __import__("subprocess").run(
+            import subprocess
+            result = subprocess.run(
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
                 capture_output=True, text=True
             )

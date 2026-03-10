@@ -6,7 +6,7 @@ import logging
 from typing import Any, Optional
 
 from .detect import Accelerator, HardwareProfile, detect_hardware
-from .strategy import OffloadMode, QuantMode, Strategy, pick_strategy
+from .strategy import DistributionMode, OffloadMode, QuantMode, Strategy, pick_strategy
 
 logger = logging.getLogger("overflowml")
 
@@ -110,11 +110,14 @@ def load_model(
         except ImportError:
             logger.warning("bitsandbytes not installed — skipping INT8 quantization")
 
-    # Device map based on offload strategy
-    if strategy.offload == OffloadMode.NONE:
+    # Device map based on distribution and offload strategy
+    if strategy.distribution == DistributionMode.DEVICE_MAP_AUTO:
+        kwargs["device_map"] = "auto"
+        kwargs["max_memory"] = _max_memory_map(hw)
+    elif strategy.offload == OffloadMode.NONE:
         kwargs["device_map"] = {"": 0}  # everything on GPU 0
     elif strategy.offload == OffloadMode.MODEL_CPU:
-        kwargs["device_map"] = "auto"  # let accelerate split across GPU/CPU
+        kwargs["device_map"] = "auto"
     elif strategy.offload == OffloadMode.SEQUENTIAL_CPU:
         kwargs["device_map"] = "auto"
         kwargs["max_memory"] = _max_memory_map(hw)
@@ -220,8 +223,10 @@ def _max_memory_map(hw: HardwareProfile, reserve_gpu_gb: float = 4) -> dict:
     """Build max_memory dict for accelerate device_map."""
     mem = {}
     if hw.accelerator == Accelerator.CUDA:
-        usable_gpu = max(1, hw.gpu_vram_gb - reserve_gpu_gb)
-        mem[0] = f"{int(usable_gpu)}GiB"
+        for i in range(hw.num_gpus):
+            per_gpu_vram = hw.gpu_vram_gbs[i] if hw.gpu_vram_gbs else hw.gpu_vram_gb
+            usable = max(1, per_gpu_vram - reserve_gpu_gb)
+            mem[i] = f"{int(usable)}GiB"
     usable_cpu = max(8, hw.system_ram_gb - 16)
     mem["cpu"] = f"{int(usable_cpu)}GiB"
     return mem
