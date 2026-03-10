@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overflowml"
-version = "0.2.0"
+version = "0.2.1"
 description = "Run AI models larger than your GPU. Auto-detects hardware and applies optimal memory strategy."
 readme = "README.md"
 license = "MIT"

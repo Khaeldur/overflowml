@@ -1,6 +1,6 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .detect import detect_hardware, HardwareProfile
 from .strategy import pick_strategy, Strategy

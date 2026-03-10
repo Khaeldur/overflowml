@@ -9,7 +9,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from .detect import detect_hardware
-from .strategy import pick_strategy
+from .strategy import OffloadMode, pick_strategy
 
 
 def main():
@@ -27,6 +27,11 @@ def main():
     plan.add_argument("model_size", type=float, help="Model size in GB (BF16 weights)")
     plan.add_argument("--fast", action="store_true", help="Prefer speed over VRAM savings")
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
+
+    # --- benchmark
+    bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
+    bench.add_argument("--custom", type=float, nargs="+", metavar="GB",
+                       help="Additional model sizes to test (e.g., --custom 7 34 140)")
 
     # --- load
     load = sub.add_parser("load", help="Load a HuggingFace model with optimal strategy")
@@ -74,6 +79,9 @@ def main():
         print("```")
         print()
 
+    elif args.command == "benchmark":
+        _run_benchmark(args)
+
     elif args.command == "load":
         from .transformers_ext import load_model
         model, tok = load_model(
@@ -108,6 +116,69 @@ def main():
 
     else:
         parser.print_help()
+
+
+POPULAR_MODELS = [
+    ("Llama-3.2-1B", 2.5),
+    ("Llama-3.2-3B", 6.5),
+    ("Mistral-7B / Llama-3-8B", 16),
+    ("Llama-3.1-13B", 26),
+    ("Mixtral-8x7B", 93),
+    ("Llama-3-70B", 140),
+    ("SDXL (diffusers)", 7),
+    ("FLUX.1-dev (diffusers)", 24),
+    ("Qwen-Image-Edit (diffusers)", 34),
+]
+
+
+def _run_benchmark(args):
+    hw = detect_hardware()
+    print("\n=== OverflowML Benchmark ===")
+    print(hw.summary())
+    print()
+
+    models = list(POPULAR_MODELS)
+    if args.custom:
+        for size in args.custom:
+            models.append((f"Custom ({size:.0f}GB)", size))
+
+    name_w = max(len(m[0]) for m in models)
+    header = f"{'Model':<{name_w}}  {'Size':>6}  {'Strategy':<20}  {'VRAM':>7}  {'Status'}"
+    print(header)
+    print("-" * len(header))
+
+    for name, size_gb in models:
+        s = pick_strategy(hw, size_gb)
+
+        # Build strategy label
+        parts = []
+        if s.quantization.value != "none":
+            parts.append(s.quantization.value.upper())
+        if s.offload.value != "none":
+            parts.append(s.offload.value.replace("_", " "))
+        if s.compile:
+            parts.append("compile")
+        strategy_label = " + ".join(parts) if parts else "direct load"
+
+        # Status
+        if s.warnings:
+            status = "!! " + s.warnings[0][:50]
+        elif s.offload == OffloadMode.NONE:
+            status = "FAST"
+        elif s.offload == OffloadMode.MODEL_CPU:
+            status = "OK (offload)"
+        elif s.offload == OffloadMode.SEQUENTIAL_CPU:
+            status = "SLOW (sequential)"
+        else:
+            status = "VERY SLOW (disk)"
+
+        vram_str = f"{s.estimated_vram_gb:.1f}GB"
+        print(f"{name:<{name_w}}  {size_gb:>5.0f}G  {strategy_label:<20}  {vram_str:>7}  {status}")
+
+    print()
+    print("Legend: FAST = fits in VRAM | OK = CPU offload | SLOW = layer-by-layer")
+    print("Run: overflowml plan <size_gb>  for detailed strategy")
+    print()
 
 
 if __name__ == "__main__":
