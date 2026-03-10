@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overflowml"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run AI models larger than your GPU. Auto-detects hardware and applies optimal memory strategy."
 readme = "README.md"
 license = "MIT"
@@ -25,14 +25,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+transformers = ["transformers>=4.40", "accelerate>=0.30"]
 diffusers = ["diffusers>=0.30", "transformers", "accelerate"]
 mlx = ["mlx>=0.20"]
 quantize = ["torchao>=0.5"]
-all = ["overflowml[diffusers,quantize]"]
+bnb = ["bitsandbytes>=0.43"]
+all = ["overflowml[transformers,diffusers,quantize,bnb]"]
 dev = ["pytest", "ruff"]
 
 [project.urls]
-Homepage = "https://github.com/hybridlab-ai/overflowml"
+Homepage = "https://github.com/Khaeldur/overflowml"
 
 [project.scripts]
 overflowml = "overflowml.cli:main"

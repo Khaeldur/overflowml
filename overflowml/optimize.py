@@ -46,6 +46,13 @@ def optimize_pipeline(
     Returns:
         The Strategy that was applied.
     """
+    if not _is_diffusers_pipeline(pipe):
+        logger.warning(
+            "Object doesn't look like a diffusers pipeline (missing offload methods). "
+            "Use optimize_model() for standalone nn.Module models instead."
+        )
+        return optimize_model(pipe, model_size_gb=model_size_gb, hw=hw, strategy=strategy, verbose=verbose)
+
     if hw is None:
         hw = detect_hardware()
 
@@ -181,14 +188,24 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
             logger.warning("torch.compile failed: %s", e)
 
 
+def _is_diffusers_pipeline(obj: Any) -> bool:
+    """Check if obj is a diffusers pipeline (has offload methods)."""
+    return (
+        hasattr(obj, "enable_sequential_cpu_offload")
+        and hasattr(obj, "enable_model_cpu_offload")
+    )
+
+
 def _estimate_model_size(pipe: Any) -> float:
-    """Estimate total model size in GB from a diffusers pipeline."""
-    total = 0.0
-    for name in ["transformer", "unet", "text_encoder", "text_encoder_2", "vae"]:
-        component = getattr(pipe, name, None)
-        if component is not None:
-            total += _count_params_gb(component)
-    return max(total, 1.0)
+    """Estimate total model size in GB from a diffusers pipeline or model."""
+    if _is_diffusers_pipeline(pipe):
+        total = 0.0
+        for name in ["transformer", "unet", "text_encoder", "text_encoder_2", "vae"]:
+            component = getattr(pipe, name, None)
+            if component is not None:
+                total += _count_params_gb(component)
+        return max(total, 1.0)
+    return _count_params_gb(pipe)
 
 
 def _count_params_gb(model: Any) -> float:

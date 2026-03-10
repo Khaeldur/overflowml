@@ -28,6 +28,13 @@ def main():
     plan.add_argument("--fast", action="store_true", help="Prefer speed over VRAM savings")
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
 
+    # --- load
+    load = sub.add_parser("load", help="Load a HuggingFace model with optimal strategy")
+    load.add_argument("model_name", help="HuggingFace model ID (e.g., meta-llama/Llama-3-8B)")
+    load.add_argument("--size", type=float, default=None, help="Model size in GB (auto-estimated if omitted)")
+    load.add_argument("--chat", action="store_true", help="Start interactive chat after loading")
+    load.add_argument("--trust-remote-code", action="store_true", help="Trust remote code")
+
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -66,6 +73,38 @@ def main():
         print("result = pipe(prompt)")
         print("```")
         print()
+
+    elif args.command == "load":
+        from .transformers_ext import load_model
+        model, tok = load_model(
+            args.model_name,
+            model_size_gb=args.size,
+            trust_remote_code=args.trust_remote_code,
+        )
+        print(f"\nModel loaded: {args.model_name}")
+        print(f"Type: {type(model).__name__}")
+        if hasattr(model, "hf_device_map"):
+            devices = set(str(v) for v in model.hf_device_map.values())
+            print(f"Devices: {', '.join(sorted(devices))}")
+
+        if args.chat:
+            print("\n=== Chat (type 'quit' to exit) ===\n")
+            import torch
+            while True:
+                try:
+                    user_input = input("You: ")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if user_input.strip().lower() in ("quit", "exit", "q"):
+                    break
+                inputs = tok(user_input, return_tensors="pt").to(model.device)
+                with torch.inference_mode():
+                    outputs = model.generate(
+                        **inputs, max_new_tokens=256,
+                        do_sample=True, temperature=0.7,
+                    )
+                response = tok.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+                print(f"AI: {response}\n")
 
     else:
         parser.print_help()
