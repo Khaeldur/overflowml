@@ -13,6 +13,7 @@ class OffloadMode(Enum):
     NONE = "none"                       # model fits in VRAM
     MODEL_CPU = "model_cpu"             # full components moved to/from GPU
     SEQUENTIAL_CPU = "sequential_cpu"   # one layer at a time (lowest VRAM)
+    EXPERT_OFFLOAD = "expert_offload"   # MoE: shared layers on GPU, experts swapped from RAM
     DISK = "disk"                       # offload to disk (for very large models)
 
 
@@ -30,6 +31,33 @@ class DistributionMode(Enum):
 
 
 @dataclass
+class MoEProfile:
+    """Mixture-of-Experts model characteristics."""
+    total_params_b: float = 0.0       # total parameters in billions
+    active_params_b: float = 0.0      # active parameters per token in billions
+    num_experts: int = 0              # total expert count per MoE layer
+    num_active_experts: int = 0       # experts activated per token (routed + shared)
+    shared_layers_gb: float = 0.0     # size of non-expert layers (attention, embed, router) in GB
+    expert_size_gb: float = 0.0       # size of all expert FFN weights in GB
+
+    @property
+    def sparsity_ratio(self) -> float:
+        if self.total_params_b == 0:
+            return 0.0
+        return 1.0 - (self.active_params_b / self.total_params_b)
+
+    @property
+    def active_expert_gb(self) -> float:
+        if self.num_experts == 0:
+            return 0.0
+        return self.expert_size_gb * (self.num_active_experts / self.num_experts)
+
+    @property
+    def gpu_footprint_gb(self) -> float:
+        return self.shared_layers_gb + self.active_expert_gb
+
+
+@dataclass
 class Strategy:
     offload: OffloadMode = OffloadMode.NONE
     quantization: QuantMode = QuantMode.NONE
@@ -43,6 +71,8 @@ class Strategy:
     gc_between_steps: bool = False
     vram_threshold: float = 0.7       # trigger cleanup at this % of VRAM
     estimated_vram_gb: float = 0.0
+    moe: Optional[MoEProfile] = None  # set for MoE models
+    llamacpp_flags: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -75,6 +105,7 @@ def pick_strategy(
     allow_quantization: bool = True,
     force_offload: Optional[OffloadMode] = None,
     force_quant: Optional[QuantMode] = None,
+    moe: Optional[MoEProfile] = None,
 ) -> Strategy:
     """Pick the optimal loading strategy for a model on this hardware.
 
@@ -87,6 +118,11 @@ def pick_strategy(
         force_quant: Override the quantization mode
     """
     s = Strategy()
+
+    # --- MoE expert offload path
+    if moe is not None:
+        return _pick_moe_strategy(hw, model_size_gb, moe, prefer_speed, allow_quantization,
+                                  force_offload, force_quant)
 
     # --- Dtype selection
     if hw.supports_bf16:
@@ -231,6 +267,220 @@ def pick_strategy(
     return s
 
 
+def _pick_moe_strategy(
+    hw: HardwareProfile,
+    model_size_gb: float,
+    moe: MoEProfile,
+    prefer_speed: bool,
+    allow_quantization: bool,
+    force_offload: Optional[OffloadMode],
+    force_quant: Optional[QuantMode],
+) -> Strategy:
+    """Strategy selection for Mixture-of-Experts models.
+
+    MoE models only activate a fraction of total params per token.
+    Key insight: shared layers (attention, embeddings, router) stay on GPU,
+    expert FFN weights can live in RAM and swap on demand.
+    """
+    s = Strategy(moe=moe)
+    vram = hw.gpu_vram_gb
+    ram = hw.system_ram_gb
+
+    # Dtype
+    if hw.supports_bf16:
+        s.dtype = "bfloat16"
+    elif hw.accelerator in (Accelerator.CUDA, Accelerator.MPS, Accelerator.MLX):
+        s.dtype = "float16"
+    else:
+        s.dtype = "float32"
+
+    if force_offload:
+        s.offload = force_offload
+    if force_quant:
+        s.quantization = force_quant
+    if force_offload or force_quant:
+        s.estimated_vram_gb = moe.gpu_footprint_gb
+        return s
+
+    # Can the FULL model fit in VRAM? (small MoE models)
+    if model_size_gb * 1.15 <= vram:
+        s.offload = OffloadMode.NONE
+        s.estimated_vram_gb = model_size_gb * 1.15
+        s.notes.append(f"Full MoE model ({model_size_gb:.0f}GB) fits in VRAM")
+        if prefer_speed:
+            s.compile = True
+        return s
+
+    # Expert offload: shared layers on GPU, experts swapped from RAM
+    # This is the sweet spot for large MoE models on consumer hardware
+    gpu_needed = moe.gpu_footprint_gb * 1.2  # 20% headroom for KV cache
+    ram_needed = model_size_gb * 1.1  # full model in RAM + 10% overhead
+
+    if gpu_needed <= vram and ram_needed <= ram:
+        s.offload = OffloadMode.EXPERT_OFFLOAD
+        s.estimated_vram_gb = gpu_needed
+        s.notes.append(
+            f"MoE expert offload: {moe.shared_layers_gb:.0f}GB shared layers + "
+            f"{moe.active_expert_gb:.0f}GB active experts on GPU"
+        )
+        s.notes.append(
+            f"Inactive experts ({moe.expert_size_gb - moe.active_expert_gb:.0f}GB) "
+            f"swap from {ram:.0f}GB RAM"
+        )
+        s.notes.append(f"Sparsity: {moe.sparsity_ratio:.0%} — only {moe.active_params_b:.0f}B of "
+                        f"{moe.total_params_b:.0f}B params active per token")
+        # llama.cpp flags for MoE offload
+        ngl = _estimate_ngl_moe(moe, vram)
+        s.llamacpp_flags = [f"-ngl {ngl}", f"-c 8192", "--mlock"]
+        return s
+
+    # Expert offload with quantization
+    if allow_quantization and ram_needed * 0.5 <= ram:
+        s.offload = OffloadMode.EXPERT_OFFLOAD
+        s.quantization = QuantMode.INT4
+        q4_total = model_size_gb * 0.3
+        q4_gpu = moe.gpu_footprint_gb * 0.3 * 1.2
+        s.estimated_vram_gb = q4_gpu
+        s.notes.append(f"MoE expert offload + INT4: {q4_total:.0f}GB total in RAM, "
+                        f"{q4_gpu:.0f}GB active on GPU")
+        ngl = _estimate_ngl_moe(moe, vram)
+        s.llamacpp_flags = [f"-ngl {ngl}", f"-c 8192", "--mlock"]
+        return s
+
+    # Fallback: sequential offload (worst case)
+    if ram >= model_size_gb * 0.5:
+        s.offload = OffloadMode.SEQUENTIAL_CPU
+        s.estimated_vram_gb = 3.0
+        s.gc_between_steps = True
+        s.warnings.append(f"MoE model too large for expert offload — falling back to sequential")
+        return s
+
+    s.offload = OffloadMode.DISK
+    s.estimated_vram_gb = 3.0
+    s.warnings.append(f"Insufficient memory for {model_size_gb:.0f}GB MoE model")
+    return s
+
+
+def _estimate_ngl_moe(moe: MoEProfile, vram_gb: float) -> int:
+    """Estimate how many layers to offload to GPU for MoE via llama.cpp."""
+    if moe.shared_layers_gb == 0:
+        return 99  # let llama.cpp figure it out
+    # Reserve 2GB for KV cache, rest for layers
+    available = vram_gb - 2.0
+    if available <= 0:
+        return 0
+    # For MoE, each layer's shared part (attention) is small,
+    # but expert FFNs are large. Use 99 and let llama.cpp auto-split.
+    return 99
+
+
+def plan_llamacpp(
+    model_path: str,
+    moe: Optional[MoEProfile] = None,
+    hw: Optional[HardwareProfile] = None,
+    context_size: int = 8192,
+    port: int = 8080,
+) -> dict:
+    """Generate llama.cpp launch configuration for a GGUF model.
+
+    Returns a dict with 'command', 'flags', and 'notes'.
+    """
+    if hw is None:
+        hw = detect_hardware()
+
+    vram = hw.gpu_vram_gb
+    ram = hw.system_ram_gb
+
+    flags = [f"-m {model_path}", f"-c {context_size}", f"--port {port}"]
+
+    if moe:
+        # MoE: use max GPU layers, llama.cpp handles expert routing
+        flags.append("-ngl 99")
+        flags.append("--mlock")
+        notes = [
+            f"MoE model: {moe.total_params_b:.0f}B total, {moe.active_params_b:.0f}B active",
+            f"Expert offload: shared layers pinned to GPU ({vram:.0f}GB), "
+            f"experts swap from RAM ({ram:.0f}GB)",
+            f"Expect ~10-25 tok/s depending on expert cache hit rate",
+        ]
+    else:
+        # Dense model
+        ngl = min(99, int((vram - 2) / 0.5))  # rough: ~0.5GB per layer
+        flags.append(f"-ngl {ngl}")
+        notes = [f"Dense model with {ngl} layers on GPU"]
+
+    return {
+        "command": "llama-server " + " ".join(flags),
+        "flags": flags,
+        "notes": notes,
+    }
+
+
+MOE_REGISTRY: dict[str, MoEProfile] = {
+    "qwen3.5-397b": MoEProfile(
+        total_params_b=397, active_params_b=17, num_experts=512, num_active_experts=11,
+        shared_layers_gb=0, expert_size_gb=0,  # filled at runtime based on quant size
+    ),
+    "qwen3.5-122b": MoEProfile(
+        total_params_b=122, active_params_b=10, num_experts=128, num_active_experts=9,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "qwen3.5-35b": MoEProfile(
+        total_params_b=35, active_params_b=3, num_experts=256, num_active_experts=9,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "minimax-m2.5": MoEProfile(
+        total_params_b=230, active_params_b=10, num_experts=256, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "step-3.5-flash": MoEProfile(
+        total_params_b=196, active_params_b=11, num_experts=64, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "mimo-v2-flash": MoEProfile(
+        total_params_b=309, active_params_b=15, num_experts=128, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "deepseek-v3.2": MoEProfile(
+        total_params_b=685, active_params_b=37, num_experts=256, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "glm-5": MoEProfile(
+        total_params_b=744, active_params_b=40, num_experts=256, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "kimi-k2.5": MoEProfile(
+        total_params_b=1000, active_params_b=32, num_experts=384, num_active_experts=8,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "mixtral-8x7b": MoEProfile(
+        total_params_b=46.7, active_params_b=12.9, num_experts=8, num_active_experts=2,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+    "mixtral-8x22b": MoEProfile(
+        total_params_b=141, active_params_b=39, num_experts=8, num_active_experts=2,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
+}
+
+
+def get_moe_profile(model_name: str, model_size_gb: float) -> Optional[MoEProfile]:
+    """Look up a known MoE profile by model name and fill in size estimates."""
+    name_lower = model_name.lower()
+    for key, profile in MOE_REGISTRY.items():
+        if key in name_lower:
+            p = MoEProfile(
+                total_params_b=profile.total_params_b,
+                active_params_b=profile.active_params_b,
+                num_experts=profile.num_experts,
+                num_active_experts=profile.num_active_experts,
+                shared_layers_gb=model_size_gb * 0.30,
+                expert_size_gb=model_size_gb * 0.70,
+            )
+            return p
+    return None
+
+
 def _estimate_vram(s: Strategy, model_gb: float, vram_gb: float):
     """Fill in estimated VRAM for forced strategies."""
     size = model_gb
@@ -245,5 +495,7 @@ def _estimate_vram(s: Strategy, model_gb: float, vram_gb: float):
         s.estimated_vram_gb = 3.0
     elif s.offload == OffloadMode.MODEL_CPU:
         s.estimated_vram_gb = size * 0.7
+    elif s.offload == OffloadMode.EXPERT_OFFLOAD and s.moe:
+        s.estimated_vram_gb = s.moe.gpu_footprint_gb
     else:
         s.estimated_vram_gb = size * 1.15

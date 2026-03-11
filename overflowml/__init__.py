@@ -1,9 +1,9 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from .detect import detect_hardware, HardwareProfile
-from .strategy import pick_strategy, Strategy, DistributionMode
+from .strategy import pick_strategy, Strategy, DistributionMode, MoEProfile, plan_llamacpp, get_moe_profile, MOE_REGISTRY
 from .optimize import optimize_pipeline, optimize_model, MemoryGuard
 
 def load_model(*args, **kwargs):
@@ -16,6 +16,10 @@ __all__ = [
     "HardwareProfile",
     "pick_strategy",
     "Strategy",
+    "MoEProfile",
+    "MOE_REGISTRY",
+    "get_moe_profile",
+    "plan_llamacpp",
     "optimize_pipeline",
     "optimize_model",
     "load_model",

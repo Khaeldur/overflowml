@@ -9,7 +9,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from .detect import detect_hardware
-from .strategy import DistributionMode, OffloadMode, pick_strategy
+from .strategy import DistributionMode, MoEProfile, OffloadMode, pick_strategy, plan_llamacpp
 
 
 def main():
@@ -27,6 +27,8 @@ def main():
     plan.add_argument("model_size", type=float, help="Model size in GB (BF16 weights, must be > 0)")
     plan.add_argument("--fast", action="store_true", help="Prefer speed over VRAM savings")
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
+    plan.add_argument("--moe", nargs=4, metavar=("TOTAL_B", "ACTIVE_B", "EXPERTS", "ACTIVE_EXPERTS"),
+                       help="MoE config: total_params_B active_params_B num_experts active_experts")
 
     # --- benchmark
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
@@ -61,25 +63,64 @@ def main():
         print(hw.summary())
         print()
 
+        moe_profile = None
+        if args.moe:
+            total_b, active_b, n_experts, n_active = float(args.moe[0]), float(args.moe[1]), int(args.moe[2]), int(args.moe[3])
+            # Estimate shared vs expert split (typically ~30% shared, ~70% experts for large MoE)
+            shared_ratio = 0.30
+            shared_gb = args.model_size * shared_ratio
+            expert_gb = args.model_size * (1.0 - shared_ratio)
+            moe_profile = MoEProfile(
+                total_params_b=total_b,
+                active_params_b=active_b,
+                num_experts=n_experts,
+                num_active_experts=n_active,
+                shared_layers_gb=shared_gb,
+                expert_size_gb=expert_gb,
+            )
+
         strategy = pick_strategy(
             hw, args.model_size,
             prefer_speed=args.fast,
             allow_quantization=not args.no_quantize,
+            moe=moe_profile,
         )
         print(f"=== Strategy for {args.model_size:.0f}GB model ===")
+        if moe_profile:
+            print(f"MoE: {moe_profile.total_params_b:.0f}B total, {moe_profile.active_params_b:.0f}B active, "
+                  f"{moe_profile.num_experts} experts ({moe_profile.num_active_experts} active)")
+            print(f"Sparsity: {moe_profile.sparsity_ratio:.0%}")
+            print()
         print(strategy.summary())
         print()
 
+        if strategy.llamacpp_flags:
+            print("=== llama.cpp Launch ===")
+            print("llama-server " + " ".join(strategy.llamacpp_flags) + " -m <model.gguf>")
+            print()
+
         # Show code example
         print("=== Usage ===")
-        print("```python")
-        print("import overflowml")
-        print("from diffusers import SomePipeline")
-        print()
-        print('pipe = SomePipeline.from_pretrained("model", torch_dtype=torch.bfloat16)')
-        print(f"strategy = overflowml.optimize_pipeline(pipe, model_size_gb={args.model_size})")
-        print("result = pipe(prompt)")
-        print("```")
+        if moe_profile:
+            print("```python")
+            print("import overflowml")
+            print()
+            print(f"moe = overflowml.MoEProfile(")
+            print(f"    total_params_b={moe_profile.total_params_b}, active_params_b={moe_profile.active_params_b},")
+            print(f"    num_experts={moe_profile.num_experts}, num_active_experts={moe_profile.num_active_experts},")
+            print(f"    shared_layers_gb={moe_profile.shared_layers_gb:.1f}, expert_size_gb={moe_profile.expert_size_gb:.1f},")
+            print(f")")
+            print(f"strategy = overflowml.pick_strategy(hw, {args.model_size}, moe=moe)")
+            print("```")
+        else:
+            print("```python")
+            print("import overflowml")
+            print("from diffusers import SomePipeline")
+            print()
+            print('pipe = SomePipeline.from_pretrained("model", torch_dtype=torch.bfloat16)')
+            print(f"strategy = overflowml.optimize_pipeline(pipe, model_size_gb={args.model_size})")
+            print("result = pipe(prompt)")
+            print("```")
         print()
 
     elif args.command == "benchmark":
@@ -135,11 +176,21 @@ POPULAR_MODELS = [
     ("Llama-3.1-13B", 26),
     # Multi-GPU LLMs
     ("Nemotron-3 Nano 30B (MoE)", 60),
+    ("Qwen3.5-27B (Dense)", 54),
+    ("Qwen3.5-35B-A3B (MoE)", 70),
     ("Mixtral-8x7B (MoE)", 93),
+    ("Step-3.5-Flash (MoE)", 392),
+    ("MiniMax M2.5 (MoE)", 460),
+    ("Qwen3.5-122B-A10B (MoE)", 244),
     ("Llama-3-70B", 140),
     ("NVLM-D-72B (Vision)", 156),
     ("Mixtral-8x22B (MoE)", 280),
+    ("MiMo-V2-Flash (MoE)", 618),
     ("Nemotron-4-340B", 680),
+    ("DeepSeek-V3.2 (MoE)", 1370),
+    ("Qwen3.5-397B-A17B (MoE)", 794),
+    ("GLM-5 (MoE)", 1488),
+    ("Kimi K2.5 (MoE)", 2000),
     ("Llama-3.1-405B", 810),
     # Diffusers
     ("SDXL (diffusers)", 7),
