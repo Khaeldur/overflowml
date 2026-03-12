@@ -176,6 +176,7 @@ POPULAR_MODELS = [
     ("Llama-3.1-13B", 26),
     # Multi-GPU LLMs
     ("Nemotron-3 Nano 30B (MoE)", 60),
+    ("Nemotron-3 Super 120B (MoE)", 120),
     ("Qwen3.5-27B (Dense)", 54),
     ("Qwen3.5-35B-A3B (MoE)", 70),
     ("Mixtral-8x7B (MoE)", 93),
