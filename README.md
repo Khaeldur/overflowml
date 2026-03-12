@@ -153,6 +153,28 @@ Built and battle-tested on a real production pipeline:
 
 *40GB model on RTX 5090 (32GB VRAM) + 194GB RAM, sequential offload, Lightning LoRA 4-step*
 
+## MoE Expert Offload — Real Benchmarks
+
+OverflowML's MoE strategy enables running 120B+ parameter models on consumer GPUs by keeping shared layers on GPU and swapping experts from RAM:
+
+| Model | Total Params | Active | VRAM Used | RAM Used | Tokens/s | Strategy |
+|-------|-------------|--------|-----------|----------|----------|----------|
+| Nemotron 3 Super | 120B | 12B | 29GB (32% GPU) | 63GB (68% CPU) | **5.7 t/s** | Expert offload Q4 |
+| Nemotron 3 Nano | 30B | 3.6B | 24GB (100% GPU) | 0GB | **228 t/s** | Full GPU |
+
+*RTX 5090 (32GB VRAM) + 196GB RAM, Ollama, Q4_K quantization, 32K context*
+
+```bash
+$ overflowml plan 120 --moe 120 12 128 8
+
+=== Strategy for 120GB model ===
+MoE: 120B total, 12B active, 128 experts (8 active)
+Quantization: int4
+Offload: expert_offload
+Estimated peak VRAM: 14.8GB
+  - MoE expert offload + INT4: 36GB total in RAM, 15GB active on GPU
+```
+
 ## Known Incompatibilities
 
 These are automatically handled by OverflowML's strategy engine:
