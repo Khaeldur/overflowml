@@ -159,10 +159,31 @@ OverflowML's MoE strategy enables running 120B+ parameter models on consumer GPU
 
 | Model | Total Params | Active | VRAM Used | RAM Used | Tokens/s | Strategy |
 |-------|-------------|--------|-----------|----------|----------|----------|
-| Nemotron 3 Super | 120B | 12B | 29GB (32% GPU) | 63GB (68% CPU) | **5.7 t/s** | Expert offload Q4 |
+| Nemotron 3 Super | 120B | 12B | 29GB (32% GPU) | 63GB (68% CPU) | **5.9 t/s** | Expert offload Q4 |
 | Nemotron 3 Nano | 30B | 3.6B | 24GB (100% GPU) | 0GB | **228 t/s** | Full GPU |
 
-*RTX 5090 (32GB VRAM) + 196GB RAM, Ollama, Q4_K quantization, 32K context*
+*RTX 5090 (32GB VRAM) + 196GB RAM, Ollama, Q4_K_M quantization*
+
+### Optimization Sweep — Finding the Optimal GPU/CPU Split
+
+We tested 12 configurations to find the best strategy for Nemotron 3 Super on a single RTX 5090:
+
+| Config | Context | GPU Layers | CPU/GPU Split | Tokens/s |
+|--------|---------|-----------|---------------|----------|
+| **Default (auto)** | 32K | auto | 68%/32% | **5.9** |
+| Reduced context | 8K | auto | 68%/32% | 5.6 |
+| Minimal context | 2K | auto | 68%/32% | 5.8 |
+| Fewer GPU layers | 8K | 20 | 77%/23% | 5.3 |
+| More GPU layers | 8K | 40 | 54%/46% | 1.3 |
+| **All GPU (forced)** | 8K | 99 | 0%/100% | **0.9** |
+| 32 threads + batch 1024 | 8K | auto | 68%/32% | 3.0 |
+
+**Key findings:**
+- Ollama's auto-detected 68%/32% CPU/GPU split is optimal
+- Forcing more onto GPU **hurts** — 100% GPU = 6.5x slower (VRAM thrashing on 86GB model in 32GB)
+- Context size barely matters — bottleneck is PCIe expert swapping, not KV cache
+- Model can't fit in 32GB at any quantization (minimum GGUF is 52.7GB due to unquantizable Mamba2 SSM state)
+- The hard limit is PCIe 5.0 bandwidth (~50 GB/s practical) for expert transfers
 
 ```bash
 $ overflowml plan 120 --moe 120 12 128 8
