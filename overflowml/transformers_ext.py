@@ -141,10 +141,14 @@ def load_model(
             and hw.supports_fp8
             and "quantization_config" not in kwargs):
         try:
-            from torchao.quantization import quantize_, Float8WeightOnlyConfig
-            quantize_(model, Float8WeightOnlyConfig())
-            if verbose:
-                logger.info("Applied FP8 weight-only quantization")
+            from torchao.quantization import quantize_
+            fp8_cfg = _load_fp8_config()
+            if fp8_cfg is not None:
+                quantize_(model, fp8_cfg)
+                if verbose:
+                    logger.info("Applied FP8 weight-only quantization")
+            else:
+                logger.warning("FP8 quantization skipped: no supported Float8WeightOnly config found in torchao")
         except Exception as e:
             logger.warning("FP8 quantization failed: %s", e)
 
@@ -238,3 +242,19 @@ def _log_device_map(model: Any):
     if device_map:
         devices = set(str(v) for v in device_map.values())
         logger.info("Device distribution: %s", ", ".join(sorted(devices)))
+
+
+def _load_fp8_config():
+    """Return a Float8WeightOnly config instance, handling torchao API changes across versions."""
+    # torchao <0.9: Float8WeightOnlyConfig
+    # torchao 0.9+: same name but may also have Float8WeightOnlyQuantizationConfig alias
+    for name in ("Float8WeightOnlyConfig", "Float8WeightOnlyQuantizationConfig"):
+        try:
+            import importlib
+            mod = importlib.import_module("torchao.quantization")
+            cls = getattr(mod, name, None)
+            if cls is not None:
+                return cls()
+        except Exception:
+            pass
+    return None

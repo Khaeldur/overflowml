@@ -106,10 +106,14 @@ def optimize_model(
     if strategy.quantization == QuantMode.FP8 and hw.supports_fp8:
         if strategy.offload == OffloadMode.NONE:
             try:
-                from torchao.quantization import quantize_, Float8WeightOnlyConfig
-                quantize_(model, Float8WeightOnlyConfig())
-                if verbose:
-                    logger.info("Applied FP8 weight-only quantization")
+                from torchao.quantization import quantize_
+                fp8_cfg = _load_fp8_config()
+                if fp8_cfg is not None:
+                    quantize_(model, fp8_cfg)
+                    if verbose:
+                        logger.info("Applied FP8 weight-only quantization")
+                else:
+                    logger.warning("FP8 quantization skipped: no supported Float8WeightOnly config found in torchao")
             except Exception as e:
                 logger.warning("FP8 quantization failed: %s", e)
 
@@ -139,13 +143,17 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
     if strategy.quantization == QuantMode.FP8 and strategy.offload == OffloadMode.NONE:
         if hw.supports_fp8:
             try:
-                from torchao.quantization import quantize_, Float8WeightOnlyConfig
-                if hasattr(pipe, "transformer"):
-                    quantize_(pipe.transformer, Float8WeightOnlyConfig())
-                elif hasattr(pipe, "unet"):
-                    quantize_(pipe.unet, Float8WeightOnlyConfig())
-                if verbose:
-                    logger.info("Applied FP8 quantization to backbone")
+                from torchao.quantization import quantize_
+                fp8_cfg = _load_fp8_config()
+                if fp8_cfg is not None:
+                    if hasattr(pipe, "transformer"):
+                        quantize_(pipe.transformer, fp8_cfg)
+                    elif hasattr(pipe, "unet"):
+                        quantize_(pipe.unet, fp8_cfg)
+                    if verbose:
+                        logger.info("Applied FP8 quantization to backbone")
+                else:
+                    logger.warning("FP8 skipped: no supported Float8WeightOnly config found in torchao")
             except Exception as e:
                 logger.warning("FP8 failed: %s — continuing without quantization", e)
     elif strategy.quantization == QuantMode.FP8 and strategy.offload != OffloadMode.NONE:
@@ -217,6 +225,20 @@ def _count_params_gb(model: Any) -> float:
     except Exception:
         pass
     return total_bytes / (1024 ** 3)
+
+
+def _load_fp8_config():
+    """Return a Float8WeightOnly config instance, handling torchao API changes across versions."""
+    for name in ("Float8WeightOnlyConfig", "Float8WeightOnlyQuantizationConfig"):
+        try:
+            import importlib
+            mod = importlib.import_module("torchao.quantization")
+            cls = getattr(mod, name, None)
+            if cls is not None:
+                return cls()
+        except Exception:
+            pass
+    return None
 
 
 class MemoryGuard:
