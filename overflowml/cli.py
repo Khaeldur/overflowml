@@ -48,6 +48,7 @@ def main():
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
     plan.add_argument("--compare", action="store_true", help="Show all viable strategies")
     plan.add_argument("--assume-size-gb", type=float, default=None, help="Override auto-detected model size")
+    plan.add_argument("--lora-size-gb", type=float, default=None, help="LoRA adapter size in GB (added to VRAM estimate)")
     plan.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
     plan.add_argument("--moe", nargs=4, metavar=("TOTAL_B", "ACTIVE_B", "EXPERTS", "ACTIVE_EXPERTS"),
                        help="MoE config: total_params_B active_params_B num_experts active_experts")
@@ -67,6 +68,17 @@ def main():
                         help="Maximum acceptable offload mode (default: sequential_cpu)")
     canrun.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
     canrun.add_argument("--trust-remote-code", action="store_true")
+
+    # --- cache
+    cache_parser = sub.add_parser("cache", help="Manage strategy cache")
+    cache_sub = cache_parser.add_subparsers(dest="cache_action")
+    cache_sub.add_parser("show", help="Show cached entries")
+    cache_sub.add_parser("clear", help="Clear all cached data")
+
+    # --- monitor
+    mon = sub.add_parser("monitor", help="Live VRAM/RAM monitoring dashboard")
+    mon.add_argument("--interval", type=float, default=1.0, help="Sampling interval in seconds")
+    mon.add_argument("--threshold", type=float, default=0.85, help="VRAM warning threshold (0-1)")
 
     # --- benchmark
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
@@ -103,6 +115,11 @@ def main():
         _cmd_doctor(args)
     elif args.command == "can-run":
         _cmd_can_run(args)
+    elif args.command == "monitor":
+        from .monitor.tui import run_tui
+        run_tui(interval=args.interval, threshold=args.threshold)
+    elif args.command == "cache":
+        _cmd_cache(args)
     elif args.command == "benchmark":
         _run_benchmark(args)
     elif args.command == "load":
@@ -197,6 +214,7 @@ def _cmd_plan(args):
         model_or_size,
         compare=args.compare,
         trust_remote_code=getattr(args, "trust_remote_code", False),
+        lora_size_gb=getattr(args, "lora_size_gb", None),
     )
 
     if args.json_output:
@@ -345,6 +363,28 @@ def _cmd_doctor(args):
         for cmd in report.fix_commands:
             print(f"  {cmd}")
     print()
+
+
+def _cmd_cache(args):
+    from .core.cache import clear_cache, show_cache, CACHE_DIR
+
+    if args.cache_action == "clear":
+        count = clear_cache()
+        print(f"Cleared {count} cached entries from {CACHE_DIR}")
+    elif args.cache_action == "show":
+        entries = show_cache()
+        if not entries:
+            print(f"Cache empty ({CACHE_DIR})")
+            return
+        print(f"Cache: {CACHE_DIR}\n")
+        for e in entries:
+            if "error" in e:
+                print(f"  {e['file']}: {e['error']}")
+            else:
+                status = "fresh" if e["fresh"] else "stale"
+                print(f"  {e['file']}: v{e['version']}, {e['age_seconds']}s old ({status})")
+    else:
+        print("Usage: overflowml cache show | overflowml cache clear")
 
 
 def _cmd_can_run(args):

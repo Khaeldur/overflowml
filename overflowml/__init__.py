@@ -1,12 +1,13 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 # --- New public API (preferred) ---
 from . import doctor
 from .inspect import inspect_model
 from .core.planner import plan
 from .core.can_run import can_run
+from .monitor import Monitor, MetricsExporter
 from .core.types import (
     ModelInfo,
     HardwareInfo,
@@ -39,6 +40,8 @@ __all__ = [
     "inspect_model",
     "plan",
     "can_run",
+    "Monitor",
+    "MetricsExporter",
     "ModelInfo",
     "HardwareInfo",
     "StrategyCandidate",

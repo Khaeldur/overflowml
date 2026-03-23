@@ -34,6 +34,7 @@ def optimize_pipeline(
     allow_quantization: bool = True,
     compile: Optional[bool] = None,
     verbose: bool = True,
+    lora_size_gb: Optional[float] = None,
 ) -> Strategy:
     """Optimize a diffusers pipeline for this hardware.
 
@@ -70,6 +71,11 @@ def optimize_pipeline(
 
     if model_size_gb is None:
         model_size_gb = _estimate_model_size(pipe)
+
+    if lora_size_gb and lora_size_gb > 0:
+        model_size_gb += lora_size_gb
+        if verbose:
+            logger.info("LoRA adapter: +%.1fGB → effective model size %.1fGB", lora_size_gb, model_size_gb)
 
     if strategy is None:
         strategy = pick_strategy(

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] - 2026-03-23
+
+### Added
+- **Strategy caching**: Hardware profiles, model metadata, and plans cached to `~/.cache/overflowml/`. Auto-invalidates on version or hardware change. `overflowml cache show` and `overflowml cache clear` CLI commands.
+- **Docker images**: `docker/Dockerfile.cuda12` and `docker/Dockerfile.rocm6`. CI workflow auto-publishes to `ghcr.io` on tag push.
+- **LoRA-aware planning**: `overflowml plan 24 --lora-size-gb 2` and `optimize_pipeline(pipe, lora_size_gb=2.0)` add LoRA overhead to VRAM/RAM estimates.
+- **Live monitor TUI**: `overflowml monitor` shows real-time VRAM/RAM usage with threshold warnings. Requires `pip install overflowml[monitor]` (rich).
+- **Prometheus exporter**: `MetricsExporter(port=9108).start()` exposes `overflowml_vram_used_bytes`, `overflowml_ram_used_bytes`, `overflowml_near_oom` gauges. Requires `pip install prometheus-client`.
+- **`Monitor` class**: `from overflowml import Monitor` for programmatic memory sampling.
+- Optional dep groups: `[hub]`, `[monitor]`, `[metrics]`
+- 14 new tests (180 total)
+
 ## [0.6.1] - 2026-03-23
 
 ### Fixed

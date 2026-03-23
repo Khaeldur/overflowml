@@ -62,7 +62,7 @@ class TestInspectModel:
         "hidden_size": 8192,
     })
     def test_safetensors_path(self, mock_config, mock_st):
-        info = inspect_model("test/model")
+        info = inspect_model("test/model-st", use_cache=False)
         assert info.confidence == "high"
         assert info.source == "safetensors index"
         assert "fp16" in info.estimated_sizes_gb
@@ -74,7 +74,7 @@ class TestInspectModel:
         "hidden_size": 4096, "num_hidden_layers": 32, "vocab_size": 32000,
     })
     def test_config_fallback(self, mock_config, mock_st):
-        info = inspect_model("test/model")
+        info = inspect_model("test/model-cfg", use_cache=False)
         assert info.confidence == "medium"
         assert "config.json" in info.source
         assert info.param_count > 0
@@ -82,14 +82,14 @@ class TestInspectModel:
     @patch("overflowml.inspect.model_estimator.probe_safetensors_size", return_value=None)
     @patch("overflowml.inspect.model_estimator.probe_config", return_value=None)
     def test_no_data(self, mock_config, mock_st):
-        info = inspect_model("test/nonexistent")
+        info = inspect_model("test/nonexistent", use_cache=False)
         assert info.confidence == "low"
         assert info.param_count is None
 
     @patch("overflowml.inspect.model_estimator.probe_safetensors_size", return_value=16_000_000_000)
     @patch("overflowml.inspect.model_estimator.probe_config", return_value=None)
     def test_size_math(self, mock_config, mock_st):
-        info = inspect_model("test/model")
+        info = inspect_model("test/model-math", use_cache=False)
         # 16B bytes / 2 = 8B params
         assert info.param_count == 8_000_000_000
         assert info.estimated_sizes_gb["fp16"] > 14.0

@@ -15,12 +15,26 @@ logger = logging.getLogger("overflowml")
 def inspect_model(
     model_id: str,
     trust_remote_code: bool = False,
+    use_cache: bool = True,
 ) -> ModelInfo:
     """Inspect a HuggingFace model and estimate sizes at various dtypes.
 
     Tries safetensors index first (exact), then config.json estimation.
     Never downloads full weight files.
     """
+    # Check cache first
+    if use_cache:
+        try:
+            from ..core.cache import load_cached_model
+            import dataclasses
+            cached = load_cached_model(model_id)
+            if cached:
+                cached.pop("_version", None)
+                cached.pop("_timestamp", None)
+                return ModelInfo(**{k: v for k, v in cached.items() if k in {f.name for f in dataclasses.fields(ModelInfo)}})
+        except Exception:
+            pass
+
     info = ModelInfo(model_id=model_id)
 
     # Strategy 1: safetensors index (exact byte count)
@@ -65,6 +79,15 @@ def inspect_model(
         "int8": params * 1 / (1024 ** 3),
         "int4": params * 0.5 / (1024 ** 3),
     }
+
+    # Save to cache
+    if use_cache:
+        try:
+            import dataclasses
+            from ..core.cache import save_cached_model
+            save_cached_model(model_id, dataclasses.asdict(info))
+        except Exception:
+            pass
 
     return info
 

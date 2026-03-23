@@ -40,6 +40,7 @@ def plan(
     *,
     compare: bool = False,
     trust_remote_code: bool = False,
+    lora_size_gb: Optional[float] = None,
 ) -> PlanResult:
     """Plan optimal loading strategy for a model.
 
@@ -79,6 +80,12 @@ def plan(
     if model_info is None:
         model_info = ModelInfo(model_id=str(model_size_gb), source="user-provided")
         result.model = model_info
+
+    # Apply LoRA overhead
+    if lora_size_gb and lora_size_gb > 0:
+        model_size_gb += lora_size_gb
+        if model_info:
+            model_info.notes.append(f"LoRA adapter adds {lora_size_gb:.1f}GB → effective size {model_size_gb:.1f}GB")
 
     # Convert to legacy hw for pick_strategy
     legacy_hw = hardware_info_to_legacy(hw)

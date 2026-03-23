@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overflowml"
-version = "0.6.1"
+version = "0.7.0"
 description = "Run AI models larger than your GPU. Auto-detects hardware and applies optimal memory strategy."
 readme = "README.md"
 license = "MIT"
@@ -40,7 +40,9 @@ diffusers = ["diffusers>=0.30,<1.0", "transformers", "accelerate"]
 mlx = ["mlx>=0.20"]
 quantize = ["torchao>=0.5"]
 bnb = ["bitsandbytes>=0.43"]
-all = ["overflowml[hub,transformers,diffusers,quantize,bnb]"]
+monitor = ["rich>=13.0"]
+metrics = ["prometheus-client>=0.20"]
+all = ["overflowml[hub,transformers,diffusers,quantize,bnb,monitor]"]
 dev = ["pytest", "ruff"]
 
 [project.urls]
