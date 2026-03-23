@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] - 2026-03-23
+
+### Added
+- MoE registry (`MOE_REGISTRY`) with pre-configured profiles for popular MoE models
+- `get_moe_profile()` helper for registry lookups
+- `plan_llamacpp()` for generating llama.cpp launch flags from a strategy
+- `overflowml plan --moe` CLI flag for MoE-aware strategy planning
+- MoE expert offload strategy tier: keeps shared layers on GPU, swaps experts from RAM
+- llama.cpp launch flags in `plan` output
+- 19 new multi-GPU tests (44 total)
+
+### Changed
+- `benchmark` output now includes GPUs column and MULTI-GPU status
+- Strategy decision tree extended with multi-GPU distribution tiers
+
 ## [0.3.0] - 2026-03-10
 
 ### Added

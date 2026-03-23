@@ -1,5 +1,10 @@
 # OverflowML
 
+[![Tests](https://github.com/Khaeldur/overflowml/actions/workflows/tests.yml/badge.svg)](https://github.com/Khaeldur/overflowml/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/overflowml)](https://pypi.org/project/overflowml/)
+[![Python](https://img.shields.io/pypi/pyversions/overflowml)](https://pypi.org/project/overflowml/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Run AI models larger than your GPU.** One line of code.
 
 OverflowML auto-detects your hardware (NVIDIA, Apple Silicon, AMD, CPU) and applies the optimal memory strategy to load and run models that don't fit in VRAM. No manual configuration needed.
@@ -70,6 +75,13 @@ pip install overflowml[diffusers]
 
 # With quantization:
 pip install overflowml[all]
+```
+
+Verify installation:
+
+```bash
+python -c "import overflowml; print(overflowml.__version__)"
+overflowml detect
 ```
 
 ## Usage
@@ -226,6 +238,29 @@ overflowml/
 | macOS + Apple Silicon | MPS / MLX | Detection ready, optimization in progress |
 | Linux + AMD | ROCm | Planned |
 | CPU-only | CPU | Fallback always works |
+
+## Troubleshooting
+
+**Hardware not detected / wrong accelerator**
+Run `overflowml detect` — if it shows CPU when you have a GPU, install the correct PyTorch build for your platform: [pytorch.org/get-started](https://pytorch.org/get-started/locally/).
+
+**FP8 errors on Windows**
+Expected. FP8 is incompatible with CPU offload on Windows — OverflowML automatically falls back to BF16. No action needed.
+
+**OOM despite using sequential offload**
+Your system RAM may be insufficient. Try `overflowml plan <size> --no-quantize` to see minimum RAM requirements. INT4 quantization (`pip install overflowml[all]`) reduces the RAM footprint by ~4x.
+
+**`torchao` import error with FP8**
+Install: `pip install torchao>=0.5` or use `pip install overflowml[quantize]`.
+
+**`accelerate` not found with `enable_model_cpu_offload`**
+Install: `pip install accelerate>=0.30` or use `pip install overflowml[diffusers]`.
+
+**`torch.compile` skipped (Triton not installed)**
+Not an error — OverflowML skips compilation silently. On Windows, Triton requires WSL2. On Linux, install with `pip install triton`.
+
+**Slow generation with sequential offload**
+Sequential offload is intentionally slow (layers move one-at-a-time). Check `overflowml plan <size>` — if your RAM is large enough, it may suggest a faster strategy like `model_cpu_offload`.
 
 ## License
 
