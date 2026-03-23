@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0] - 2026-03-23
+
+### Fixed
+- **ROCm device placement bugs**: AMD GPUs were silently placed on CPU instead of CUDA (via HIP). Fixed in `optimize.py` (2 locations) and `transformers_ext.py` (`_max_memory_map`)
+- **MemoryGuard CUDA-only**: Now supports ROCm (via HIP) and Apple MPS — `torch.mps.empty_cache()` and `torch.mps.synchronize()` used on Apple Silicon
+
+### Added
+- `__main__.py` — `python -m overflowml` now works
+- CLI `--help` shows usage examples
+- `_pick_device()` helper centralizes device selection (CUDA, ROCm, MPS, CPU)
+- 33 new tests (85 total): CLI subprocess tests, MemoryGuard, param estimation, pipeline detection, `plan_llamacpp`, `_max_memory_map`, device placement
+
 ## [0.4.2] - 2026-03-23
 
 ### Added

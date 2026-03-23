@@ -16,6 +16,13 @@ def main():
     parser = argparse.ArgumentParser(
         prog="overflowml",
         description="OverflowML — Run AI models larger than your GPU",
+        epilog="Examples:\n"
+               "  overflowml detect\n"
+               "  overflowml plan 40\n"
+               "  overflowml plan 120 --moe 120 12 128 8\n"
+               "  overflowml benchmark --custom 70 140\n"
+               "  overflowml load meta-llama/Llama-3-8B --chat\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
 

@@ -226,7 +226,7 @@ def _detect_model_class(model_name: str, trust_remote_code: bool = False):
 def _max_memory_map(hw: HardwareProfile, reserve_gpu_gb: float = 4) -> dict:
     """Build max_memory dict for accelerate device_map."""
     mem = {}
-    if hw.accelerator == Accelerator.CUDA:
+    if hw.accelerator in (Accelerator.CUDA, Accelerator.ROCm):
         for i in range(hw.num_gpus):
             per_gpu_vram = hw.gpu_vram_gbs[i] if hw.gpu_vram_gbs else hw.gpu_vram_gb
             usable = max(1, per_gpu_vram - reserve_gpu_gb)

@@ -119,7 +119,7 @@ def optimize_model(
 
     # Device placement
     if strategy.offload == OffloadMode.NONE:
-        device = "cuda" if hw.accelerator == Accelerator.CUDA else "mps" if hw.accelerator == Accelerator.MPS else "cpu"
+        device = _pick_device(hw)
         model.to(device)
 
     # Compile
@@ -170,8 +170,7 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
         if verbose:
             logger.info("Model CPU offload: components move to GPU on demand")
     elif strategy.offload == OffloadMode.NONE:
-        device = "cuda" if hw.accelerator == Accelerator.CUDA else "mps"
-        pipe.to(device)
+        pipe.to(_pick_device(hw))
         if verbose:
             logger.info("Model on %s", device)
 
@@ -194,6 +193,14 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
                 logger.info("Triton not installed — skipping torch.compile")
         except Exception as e:
             logger.warning("torch.compile failed: %s", e)
+
+
+def _pick_device(hw: HardwareProfile) -> str:
+    if hw.accelerator in (Accelerator.CUDA, Accelerator.ROCm):
+        return "cuda"
+    if hw.accelerator == Accelerator.MPS:
+        return "mps"
+    return "cpu"
 
 
 def _is_diffusers_pipeline(obj: Any) -> bool:
@@ -258,7 +265,10 @@ class MemoryGuard:
     def __enter__(self):
         try:
             import torch
-            torch.cuda.synchronize()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.synchronize()
         except Exception:
             pass
         return self
@@ -266,21 +276,22 @@ class MemoryGuard:
     def __exit__(self, *exc):
         try:
             import torch
-            if not torch.cuda.is_available():
-                return
-
             gc.collect()
-            torch.cuda.empty_cache()
 
-            reserved_gb = torch.cuda.memory_reserved() / 1024 ** 3
-            total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-            usage = reserved_gb / total_gb
-
-            if usage > self.threshold:
-                if self.verbose:
-                    logger.info("VRAM %.0f%% — deep cleanup", usage * 100)
-                gc.collect()
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+                reserved_gb = torch.cuda.memory_reserved() / 1024 ** 3
+                total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+                usage = reserved_gb / total_gb
+                if usage > self.threshold:
+                    if self.verbose:
+                        logger.info("VRAM %.0f%% — deep cleanup", usage * 100)
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+                if self.verbose:
+                    logger.info("MPS cache cleared")
         except Exception:
             pass
