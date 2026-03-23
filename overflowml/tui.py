@@ -9,17 +9,11 @@ from __future__ import annotations
 import sys
 
 
-def run_tui():
-    """Launch the interactive terminal dashboard."""
-    try:
-        from textual.app import App, ComposeResult
-        from textual.containers import Horizontal, Vertical, ScrollableContainer
-        from textual.widgets import Button, Header, Footer, Static, Input, RichLog
-        from textual.binding import Binding
-    except ImportError:
-        print("Terminal UI requires 'textual'. Install: pip install overflowml[ui]")
-        print("  pip install textual")
-        sys.exit(1)
+def _get_app_class():
+    from textual.app import App, ComposeResult
+    from textual.containers import Horizontal, Vertical, ScrollableContainer
+    from textual.widgets import Button, Header, Footer, Static, Input, RichLog
+    from textual.binding import Binding
 
     class OverflowMLApp(App):
         CSS = """
@@ -33,6 +27,7 @@ def run_tui():
             width: 24;
             background: $surface;
             padding: 1;
+            overflow-y: auto;
         }
         #sidebar Button {
             width: 100%;
@@ -291,5 +286,16 @@ def run_tui():
             except Exception as e:
                 log.write(f"  [red]Error: {e}[/red]")
 
-    app = OverflowMLApp()
+    return OverflowMLApp
+
+
+def run_tui():
+    """Launch the interactive terminal dashboard."""
+    try:
+        AppClass = _get_app_class()
+    except ImportError:
+        print("Terminal UI requires 'textual'. Install: pip install overflowml[ui]")
+        print("  pip install textual")
+        sys.exit(1)
+    app = AppClass()
     app.run()
