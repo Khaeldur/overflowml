@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0] - 2026-03-23
+
+### Added
+- **Auto-batching engine** — OverflowML's second core capability. Measures VRAM headroom after model loading and calculates optimal batch size that fills available memory without OOM.
+  - `auto_batch(prompts, pipe)` — yields optimally-sized batches with VRAM cleanup between them
+  - `calculate_batch_size(per_item_gb=3.0)` → `BatchConfig(batch_size=4)`
+  - `measure_vram_headroom()` → `(available_gb, total_gb)`
+  - `MemoryGuard.auto_batch(prompts, pipe)` — combines batching + cleanup in one API
+  - `optimize_pipeline()` now reports optimal batch_size in strategy notes
+- Architecture-aware per-item estimation: diffusers (~3GB/image), LLMs (KV cache + activations)
+- 15 new tests (209 total)
+
 ## [0.9.0] - 2026-03-23
 
 ### Added

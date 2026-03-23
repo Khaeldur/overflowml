@@ -89,6 +89,17 @@ def optimize_pipeline(
         logger.info("OverflowML: Strategy selected\n%s", strategy.summary())
 
     _apply_strategy(pipe, strategy, hw, compile_override=compile, verbose=verbose)
+
+    # Auto-calculate optimal batch size from remaining VRAM
+    try:
+        from .batch import calculate_batch_size
+        batch_config = calculate_batch_size(pipe_or_model=pipe)
+        strategy.notes.append(f"Optimal batch_size={batch_config.batch_size} ({batch_config.estimated_per_item_gb:.1f}GB/item, {batch_config.available_vram_gb:.1f}GB headroom)")
+        if verbose:
+            logger.info("Auto-batch: optimal batch_size=%d", batch_config.batch_size)
+    except Exception:
+        pass
+
     return strategy
 
 
@@ -280,11 +291,26 @@ class MemoryGuard:
         for prompt in prompts:
             with guard:
                 result = pipe(prompt)
+
+    With auto-batching:
+        guard = MemoryGuard(threshold=0.7)
+        for batch in guard.auto_batch(prompts, pipe):
+            results = pipe(batch)  # optimal batch size, no OOM
     """
 
     def __init__(self, threshold: float = 0.7, verbose: bool = False):
         self.threshold = threshold
         self.verbose = verbose
+        self._batch_config = None
+
+    def auto_batch(self, items, pipe_or_model=None, **kwargs):
+        """Yield optimally-sized batches with VRAM cleanup between them.
+
+        Combines auto-batch calculation with MemoryGuard cleanup.
+        """
+        from .batch import auto_batch
+        for batch in auto_batch(items, pipe_or_model, cleanup_between=True, **kwargs):
+            yield batch
 
     def __enter__(self):
         try:

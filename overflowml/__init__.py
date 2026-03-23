@@ -1,6 +1,6 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 # --- New public API (preferred) ---
 from . import doctor
@@ -8,6 +8,7 @@ from .inspect import inspect_model
 from .core.planner import plan
 from .core.can_run import can_run
 from .monitor import Monitor, MetricsExporter
+from .batch import auto_batch, calculate_batch_size, BatchConfig, measure_vram_headroom
 from .core.types import (
     ModelInfo,
     HardwareInfo,
@@ -42,6 +43,10 @@ __all__ = [
     "can_run",
     "Monitor",
     "MetricsExporter",
+    "auto_batch",
+    "calculate_batch_size",
+    "BatchConfig",
+    "measure_vram_headroom",
     "ModelInfo",
     "HardwareInfo",
     "StrategyCandidate",
