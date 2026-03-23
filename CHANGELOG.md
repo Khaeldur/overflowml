@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0] - 2026-03-23
+
+### Added
+- **Real inference benchmark**: `overflowml benchmark --run` downloads a small test model (TinyLlama 1.1B), runs actual inference, and measures throughput vs OverflowML's prediction.
+  - `--model` flag to specify a custom HuggingFace model
+  - `--json` output for CI integration
+  - Reports: load time, warmup, inference time, tokens/s, peak VRAM
+  - Compares predicted strategy vs actual execution
+- `BenchmarkResult` dataclass for programmatic access
+- Test model registry: TinyLlama 1.1B, Phi-1.5
+- 10 new tests (190 total)
+
 ## [0.7.0] - 2026-03-23
 
 ### Added

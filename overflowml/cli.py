@@ -84,6 +84,13 @@ def main():
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
     bench.add_argument("--custom", type=float, nargs="+", metavar="GB",
                        help="Additional model sizes to test (e.g., --custom 7 34 140)")
+    bench.add_argument("--run", action="store_true",
+                       help="Run real inference benchmark (downloads a small test model)")
+    bench.add_argument("--model", type=str, default=None,
+                       help="HuggingFace model ID for --run (default: TinyLlama-1.1B)")
+    bench.add_argument("--json", dest="json_output", action="store_true",
+                       help="Output as JSON (with --run)")
+    bench.add_argument("--trust-remote-code", action="store_true")
 
     # --- load
     load = sub.add_parser("load", help="Load a HuggingFace model with optimal strategy")
@@ -121,7 +128,10 @@ def main():
     elif args.command == "cache":
         _cmd_cache(args)
     elif args.command == "benchmark":
-        _run_benchmark(args)
+        if getattr(args, "run", False):
+            _cmd_benchmark_run(args)
+        else:
+            _run_benchmark(args)
     elif args.command == "load":
         _cmd_load(args)
     else:
@@ -362,6 +372,42 @@ def _cmd_doctor(args):
         print(f"\nSuggested fixes:")
         for cmd in report.fix_commands:
             print(f"  {cmd}")
+    print()
+
+
+def _cmd_benchmark_run(args):
+    from .benchmark import run_benchmark
+
+    print("\n=== OverflowML Real Inference Benchmark ===\n")
+    result = run_benchmark(
+        model_id=args.model,
+        trust_remote_code=getattr(args, "trust_remote_code", False),
+    )
+
+    if getattr(args, "json_output", False):
+        import dataclasses
+        print(json.dumps(dataclasses.asdict(result), indent=2, default=str))
+        return
+
+    if result.error:
+        print(f"ERROR: {result.error}")
+        return
+
+    print(f"Model: {result.model_id}")
+    print(f"Strategy: {result.strategy_used}")
+    print(f"Load time: {result.load_time_s:.1f}s")
+    print(f"Warmup: {result.warmup_time_s:.2f}s")
+    print(f"Inference: {result.inference_time_s:.2f}s")
+    print(f"Tokens generated: {result.tokens_generated}")
+    print(f"Throughput: {result.tokens_per_second:.1f} tok/s")
+    if result.peak_vram_gb > 0:
+        print(f"Peak VRAM: {result.peak_vram_gb:.2f} GB")
+    if result.predicted_strategy:
+        match = "YES" if result.prediction_matched else "NO"
+        print(f"\nPredicted strategy: {result.predicted_strategy}")
+        print(f"Prediction matched: {match}")
+    for note in result.notes:
+        print(f"  {note}")
     print()
 
 
