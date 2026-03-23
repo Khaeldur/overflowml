@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0] - 2026-03-23
+
+### Added
+- **Interactive Terminal UI**: `overflowml ui` launches a clickable dashboard with buttons for all commands. No need to remember CLI syntax.
+  - Sidebar: Detect, Doctor, Plan, Compare, Can Run, Benchmark, Cache, VRAM Status
+  - Input field for model ID or size
+  - Color-coded output with reasoning
+  - Keyboard shortcuts: d/o/p/b/q
+  - Auto-detects hardware on startup
+  - Requires: `pip install overflowml[ui]` (textual)
+- New optional dep group: `[ui]`
+
 ## [0.11.0] - 2026-03-23
 
 ### Added — Runtime Intelligence Engine

@@ -80,6 +80,9 @@ def main():
     mon.add_argument("--interval", type=float, default=1.0, help="Sampling interval in seconds")
     mon.add_argument("--threshold", type=float, default=0.85, help="VRAM warning threshold (0-1)")
 
+    # --- ui
+    sub.add_parser("ui", help="Launch interactive terminal dashboard")
+
     # --- benchmark
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
     bench.add_argument("--custom", type=float, nargs="+", metavar="GB",
@@ -122,6 +125,9 @@ def main():
         _cmd_doctor(args)
     elif args.command == "can-run":
         _cmd_can_run(args)
+    elif args.command == "ui":
+        from .tui import run_tui
+        run_tui()
     elif args.command == "monitor":
         from .monitor.tui import run_tui
         run_tui(interval=args.interval, threshold=args.threshold)
