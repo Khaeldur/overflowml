@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2] - 2026-03-23
+
+### Added
+- AMD ROCm detection: GPUs on ROCm builds of PyTorch now correctly identified as `Accelerator.ROCm` instead of falling back to CPU
+- ROCm correctly sets `supports_fp8=False` (torchao FP8 is CUDA-only)
+- 8 new tests: 4 strategy tests for ROCm, 4 detection-level tests (CUDA vs ROCm disambiguation, no-GPU path)
+
 ## [0.4.1] - 2026-03-23
 
 ### Changed

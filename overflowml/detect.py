@@ -94,15 +94,19 @@ def _detect_cuda() -> Optional[HardwareProfile]:
         import psutil
         ram_gb = psutil.virtual_memory().total / (1024 ** 3)
 
+        is_rocm = getattr(torch.version, "hip", None) is not None
+        accelerator = Accelerator.ROCm if is_rocm else Accelerator.CUDA
+
         supports_fp8 = False
-        try:
-            from torchao.quantization import Float8WeightOnlyConfig  # noqa: F401
-            supports_fp8 = True
-        except ImportError:
-            pass
+        if not is_rocm:
+            try:
+                from torchao.quantization import Float8WeightOnlyConfig  # noqa: F401
+                supports_fp8 = True
+            except ImportError:
+                pass
 
         return HardwareProfile(
-            accelerator=Accelerator.CUDA,
+            accelerator=accelerator,
             gpu_name=gpu_names[0],
             gpu_vram_gb=min_vram,
             gpu_compute_capability=primary_cc,

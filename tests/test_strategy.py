@@ -122,6 +122,31 @@ class TestAppleSilicon:
         assert any("unified" in n.lower() for n in s.notes)
 
 
+class TestROCm:
+    def test_rocm_small_model_fits(self):
+        hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, supports_fp8=False, supports_bf16=True)
+        s = pick_strategy(hw, model_size_gb=10)
+        assert s.offload == OffloadMode.NONE
+        assert s.quantization == QuantMode.NONE
+        assert s.dtype == "bfloat16"
+
+    def test_rocm_no_fp8(self):
+        # ROCm never gets FP8 — torchao FP8 is CUDA-only
+        hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, supports_fp8=False)
+        s = pick_strategy(hw, model_size_gb=20)
+        assert s.quantization != QuantMode.FP8
+
+    def test_rocm_large_model_falls_back_to_offload(self):
+        hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, system_ram_gb=64, supports_fp8=False)
+        s = pick_strategy(hw, model_size_gb=40)
+        assert s.offload in (OffloadMode.MODEL_CPU, OffloadMode.SEQUENTIAL_CPU)
+
+    def test_rocm_dtype_no_bf16(self):
+        hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, supports_fp8=False, supports_bf16=False)
+        s = pick_strategy(hw, model_size_gb=5)
+        assert s.dtype == "float16"
+
+
 class TestEdgeCases:
     def test_zero_vram(self):
         hw = make_hw(accelerator=Accelerator.CPU, gpu_vram_gb=0, system_ram_gb=32)

@@ -127,7 +127,7 @@ def pick_strategy(
     # --- Dtype selection
     if hw.supports_bf16:
         s.dtype = "bfloat16"
-    elif hw.accelerator in (Accelerator.CUDA, Accelerator.MPS, Accelerator.MLX):
+    elif hw.accelerator in (Accelerator.CUDA, Accelerator.ROCm, Accelerator.MPS, Accelerator.MLX):
         s.dtype = "float16"
     else:
         s.dtype = "float32"
@@ -289,7 +289,7 @@ def _pick_moe_strategy(
     # Dtype
     if hw.supports_bf16:
         s.dtype = "bfloat16"
-    elif hw.accelerator in (Accelerator.CUDA, Accelerator.MPS, Accelerator.MLX):
+    elif hw.accelerator in (Accelerator.CUDA, Accelerator.ROCm, Accelerator.MPS, Accelerator.MLX):
         s.dtype = "float16"
     else:
         s.dtype = "float32"
