@@ -108,6 +108,9 @@ def plan(
         model_size_gb, hw, result.recommended, candidates, model_info
     )
 
+    # Runtime intelligence: KV cache, flash attention, PCIe, fragmentation
+    _add_runtime_intelligence(result, model_size_gb, hw)
+
     # If not compare mode, trim to just recommended
     if not compare:
         result.strategies = [c for c in candidates if c.viable]
@@ -225,3 +228,70 @@ def _strategy_to_candidate(s, model_size_gb: float, legacy_hw) -> StrategyCandid
         rejection_reason=rejection,
         notes=notes,
     )
+
+
+def _add_runtime_intelligence(result: PlanResult, model_size_gb: float, hw: HardwareInfo):
+    """Add runtime analysis: KV cache, flash attention, PCIe, fragmentation, load time."""
+    from .runtime import (
+        context_adjusted_vram,
+        detect_flash_attention,
+        detect_pcie_bandwidth,
+        diagnose_fragmentation,
+        estimate_load_time,
+        suggest_draft_model,
+    )
+
+    runtime_notes = []
+
+    # KV cache warning — the hidden VRAM killer
+    ctx_vram = context_adjusted_vram(model_size_gb, context_length=4096)
+    if ctx_vram["kv_cache_gb"] > 1.0:
+        runtime_notes.append(
+            f"KV cache warning: {ctx_vram['breakdown']}"
+        )
+        if ctx_vram["total_gb"] > hw.total_vram_gb and hw.total_vram_gb > 0:
+            runtime_notes.append(
+                f"At 4K context, total VRAM need ({ctx_vram['total_gb']:.0f}GB) "
+                f"exceeds GPU ({hw.total_vram_gb:.0f}GB) — reduce context or use longer offload"
+            )
+
+    # Flash attention
+    flash = detect_flash_attention()
+    if not flash.available:
+        runtime_notes.append("No efficient attention backend — using naive attention (2-4x slower, higher VRAM)")
+        runtime_notes.append("Fix: pip install flash-attn or upgrade torch >= 2.0")
+    else:
+        runtime_notes.append(f"Attention backend: {flash.backend} ({flash.notes[0] if flash.notes else ''})")
+
+    # PCIe bandwidth (relevant for hybrid/offload)
+    if result.recommended and "hybrid" in (result.recommended.name or "").lower():
+        pcie = detect_pcie_bandwidth()
+        if pcie.detected:
+            ram_portion = model_size_gb - (hw.total_vram_gb * 0.9 if hw.gpus else 0)
+            if ram_portion > 0 and pcie.practical_gbps > 0:
+                overhead_per_pass = ram_portion / pcie.practical_gbps
+                runtime_notes.append(
+                    f"PCIe Gen{pcie.generation} x{pcie.width}: ~{overhead_per_pass:.1f}s transfer overhead per forward pass "
+                    f"({ram_portion:.0f}GB over {pcie.practical_gbps:.0f} GB/s)"
+                )
+
+    # Fragmentation check
+    frag = diagnose_fragmentation()
+    if frag.is_fragmented:
+        runtime_notes.extend(frag.notes)
+
+    # Load time estimate
+    load_est = estimate_load_time(model_size_gb)
+    if model_size_gb > 20:
+        runtime_notes.append(load_est.notes[0])
+
+    # Speculative decode suggestion
+    if result.model and result.model.model_id:
+        draft = suggest_draft_model(result.model.model_id)
+        if draft:
+            runtime_notes.append(f"Speculative decode: use {draft['draft_model']} as draft ({draft['expected_speedup']} speedup)")
+
+    if runtime_notes:
+        result.explanation.append("")
+        result.explanation.append("Runtime analysis:")
+        result.explanation.extend(f"  {n}" for n in runtime_notes)

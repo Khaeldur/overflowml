@@ -84,6 +84,9 @@ def run(
     if model_check:
         report.issues.append(model_check)
 
+    # Runtime checks: flash attention, fragmentation
+    _add_runtime_checks(report)
+
     # Aggregate
     report.ok = all(i.severity != "error" for i in report.issues)
     report.fix_commands = [
@@ -92,3 +95,39 @@ def run(
     ]
 
     return report
+
+
+def _add_runtime_checks(report: DoctorReport):
+    """Add runtime intelligence checks to doctor report."""
+    from ..core.types import DoctorIssue
+
+    # Flash attention
+    try:
+        from ..core.runtime import detect_flash_attention
+        flash = detect_flash_attention()
+        if flash.available:
+            report.issues.append(DoctorIssue(
+                code="flash_attn_ok", severity="info",
+                message=f"Efficient attention: {flash.backend} {flash.version}",
+            ))
+        else:
+            report.issues.append(DoctorIssue(
+                code="flash_attn_missing", severity="warn",
+                message="No efficient attention backend (slower inference, higher VRAM)",
+                suggested_fix="pip install flash-attn (CUDA) or upgrade torch >= 2.0",
+            ))
+    except Exception:
+        pass
+
+    # Fragmentation
+    try:
+        from ..core.runtime import diagnose_fragmentation
+        frag = diagnose_fragmentation()
+        if frag.is_fragmented:
+            report.issues.append(DoctorIssue(
+                code="vram_fragmented", severity="warn",
+                message=frag.notes[0] if frag.notes else "VRAM fragmentation detected",
+                suggested_fix="gc.collect() + torch.cuda.empty_cache() or restart process",
+            ))
+    except Exception:
+        pass

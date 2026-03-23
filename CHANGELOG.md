@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.11.0] - 2026-03-23
+
+### Added — Runtime Intelligence Engine
+Every plan output now includes runtime analysis beyond just weight placement:
+
+**Tier 1: Make the planner truthful**
+- **KV cache budgeting**: Estimates KV cache memory from model config (layers, heads, context length). Plans now show "Weights 70GB + KV cache 2GB + Activations 0.1GB = 72.1GB" — the full VRAM truth. Warns when cache pushes total beyond VRAM.
+- **Flash attention detection**: Checks for flash_attn, PyTorch SDPA, xformers. Doctor warns if no efficient backend found. Plan shows which backend is active.
+- **PCIe bandwidth awareness**: Detects Gen3/4/5 and link width via nvidia-smi. Estimates transfer overhead for hybrid offloading ("41GB over PCIe Gen5: ~1.9s per forward pass").
+- **Fragmentation diagnostics**: Detects when reserved VRAM >> allocated (allocator holes). Doctor flags it with fix commands.
+
+**Tier 2: Deepen the intelligent planner**
+- **Per-layer precision planning**: `plan_layer_precision()` recommends mixed precision per layer type — embedding/head FP16, middle attention INT8, middle FFN INT4. Shows total savings.
+- **Context-length-aware VRAM**: `context_adjusted_vram()` calculates total need (weights + KV cache + activations) for any context length.
+- **Startup/load-time hints**: Estimates load time from model size, suggests safetensors + mmap for large models.
+- **Cache-aware batch planning**: Auto-batching now factors in KV cache growth per batch item.
+
+**Tier 3: Magic features**
+- **Speculative decode auto-pairing**: Registry maps large models to suggested draft models (Llama-3-70B → TinyLlama, Mixtral → Mistral-7B). Plan output shows "use X as draft (2-3x speedup)".
+- **Prefix cache savings estimator**: Calculates memory savings from shared system prompts across requests.
+
+**Doctor now checks**: flash attention availability, VRAM fragmentation.
+
+24 new tests (233 total).
+
 ## [0.10.0] - 2026-03-23
 
 ### Added
