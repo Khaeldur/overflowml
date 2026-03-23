@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1] - 2026-03-23
+
+### Changed
+- PyPI metadata: Beta status, Python 3.10–3.13 classifiers, OS classifiers, expanded keywords
+- Added project URLs (Repository, Changelog, Bug Tracker) to PyPI listing
+- Added CI badge, install verification, and Troubleshooting section to README
+- Added GitHub CI workflow, issue templates, and SECURITY.md
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

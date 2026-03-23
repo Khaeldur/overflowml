@@ -1,6 +1,6 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 from .detect import detect_hardware, HardwareProfile
 from .strategy import pick_strategy, Strategy, DistributionMode, MoEProfile, plan_llamacpp, get_moe_profile, MOE_REGISTRY
