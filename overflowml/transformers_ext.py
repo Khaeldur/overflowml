@@ -116,6 +116,10 @@ def load_model(
         kwargs["max_memory"] = _max_memory_map(hw)
     elif strategy.offload == OffloadMode.NONE:
         kwargs["device_map"] = {"": 0}  # everything on GPU 0
+    elif strategy.offload == OffloadMode.LAYER_HYBRID:
+        # Layer-split hybrid: fill GPU VRAM, overflow rest to RAM
+        kwargs["device_map"] = "auto"
+        kwargs["max_memory"] = _max_memory_map(hw, reserve_gpu_gb=2)
     elif strategy.offload == OffloadMode.MODEL_CPU:
         kwargs["device_map"] = "auto"
     elif strategy.offload == OffloadMode.SEQUENTIAL_CPU:

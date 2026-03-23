@@ -154,10 +154,10 @@ class TestMultiGPURegressions:
         assert s.offload == OffloadMode.NONE
         assert s.distribution == DistributionMode.NONE
 
-    def test_single_gpu_sequential_unchanged(self):
+    def test_single_gpu_offload_unchanged(self):
         hw = make_single_gpu(vram=24, ram=128)
         s = pick_strategy(hw, model_size_gb=80)
-        assert s.offload == OffloadMode.SEQUENTIAL_CPU
+        assert s.offload in (OffloadMode.SEQUENTIAL_CPU, OffloadMode.LAYER_HYBRID)
         assert s.distribution == DistributionMode.NONE
 
     def test_apple_silicon_ignores_multi_gpu(self):

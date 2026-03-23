@@ -12,6 +12,7 @@ from .detect import Accelerator, HardwareProfile
 class OffloadMode(Enum):
     NONE = "none"                       # model fits in VRAM
     MODEL_CPU = "model_cpu"             # full components moved to/from GPU
+    LAYER_HYBRID = "layer_hybrid"       # layers split: fill GPU VRAM, overflow rest to RAM
     SEQUENTIAL_CPU = "sequential_cpu"   # one layer at a time (lowest VRAM)
     EXPERT_OFFLOAD = "expert_offload"   # MoE: shared layers on GPU, experts swapped from RAM
     DISK = "disk"                       # offload to disk (for very large models)
@@ -233,31 +234,68 @@ def pick_strategy(
         s.gc_between_steps = True
         return s
 
-    # Model too large even for component offload — need sequential
-    if ram >= model_size_gb * 1.3:
+    # --- LAYER HYBRID: model too large for component offload, but fits in GPU+RAM ---
+    # Split layers: fill GPU VRAM (~90%), overflow rest to CPU RAM.
+    # This is the core hybrid approach — much faster than sequential.
+    if ram >= model_size_gb * 1.1:
+        gpu_portion = vram * 0.9  # use 90% of VRAM for layers
+        ram_portion = model_size_gb - gpu_portion
+
+        if allow_quantization and hw.supports_fp8 and hw.os != "Windows":
+            # FP8 + hybrid: more layers fit on GPU
+            s.quantization = QuantMode.FP8
+            s.offload = OffloadMode.LAYER_HYBRID
+            fp8_gpu = gpu_portion  # GPU holds fp8 layers
+            fp8_total = model_size_gb * 0.55
+            s.estimated_vram_gb = min(gpu_portion, fp8_total) * 1.1
+            s.notes.append(f"FP8 + layer split: ~{fp8_gpu:.0f}GB on GPU, ~{max(0, fp8_total - fp8_gpu):.0f}GB in RAM")
+        else:
+            s.offload = OffloadMode.LAYER_HYBRID
+            s.estimated_vram_gb = gpu_portion * 1.1
+            s.notes.append(f"Layer split: ~{gpu_portion:.0f}GB on GPU ({vram:.0f}GB VRAM), ~{ram_portion:.0f}GB in {ram:.0f}GB RAM")
+
+        s.gc_between_steps = True
+        if hw.os == "Windows":
+            s.warnings.append("FP8 incompatible with layer hybrid on Windows — using BF16")
+            s.notes.append("expandable_segments disabled (Windows WDDM)")
+        return s
+
+    # Sequential offload — last resort before disk (very slow, only ~3GB VRAM)
+    if ram >= model_size_gb * 0.5:
         s.offload = OffloadMode.SEQUENTIAL_CPU
         s.estimated_vram_gb = 3.0  # ~1 layer at a time
         s.gc_between_steps = True
         s.notes.append(f"Sequential offload: 1 layer at a time (~3GB VRAM), model lives in {ram:.0f}GB RAM")
 
-        # FP8 is INCOMPATIBLE with CPU offload (Float8Tensor can't move between devices)
         if hw.os == "Windows":
             s.warnings.append("FP8 incompatible with CPU offload on Windows (torchao Float8Tensor device mismatch)")
         elif allow_quantization and hw.supports_fp8:
-            # On Linux, torchao may support FP8 + offload — experimental
             s.notes.append("FP8 + sequential offload: experimental on Linux")
 
-        # attention_slicing conflicts with sequential offload
         s.warnings.append("Do NOT enable attention_slicing with sequential offload (causes CUDA illegal memory access)")
         return s
 
-    # Extreme case: not enough RAM either
+    # INT4 + hybrid: model too large for RAM at full precision, but INT4 fits in GPU+RAM
     if allow_quantization:
+        int4_size = model_size_gb * 0.3
+        if int4_size <= vram + ram * 0.8:
+            gpu_portion = min(vram * 0.9, int4_size)
+            ram_portion = int4_size - gpu_portion
+            if ram_portion <= ram * 0.8:
+                s.quantization = QuantMode.INT4
+                s.offload = OffloadMode.LAYER_HYBRID
+                s.estimated_vram_gb = gpu_portion * 1.1
+                s.gc_between_steps = True
+                s.notes.append(f"INT4 ({int4_size:.0f}GB) + layer split: ~{gpu_portion:.0f}GB on GPU, ~{ram_portion:.0f}GB in RAM")
+                return s
+
+    # Extreme case: not enough RAM even for INT4 hybrid
+    if allow_quantization:
+        int4_size = model_size_gb * 0.3
         s.quantization = QuantMode.INT4
         s.offload = OffloadMode.SEQUENTIAL_CPU
         s.estimated_vram_gb = 3.0
         s.gc_between_steps = True
-        int4_size = model_size_gb * 0.3
         s.notes.append(f"Insufficient RAM ({ram:.0f}GB) for full model ({model_size_gb:.0f}GB) — INT4 reduces to ~{int4_size:.0f}GB")
         s.warnings.append(f"Model ({model_size_gb:.0f}GB) exceeds both VRAM and RAM — INT4 quantization to ~{int4_size:.0f}GB")
         return s
@@ -500,6 +538,8 @@ def _estimate_vram(s: Strategy, model_gb: float, vram_gb: float):
 
     if s.offload == OffloadMode.SEQUENTIAL_CPU:
         s.estimated_vram_gb = 3.0
+    elif s.offload == OffloadMode.LAYER_HYBRID:
+        s.estimated_vram_gb = min(size, vram_gb * 0.9)
     elif s.offload == OffloadMode.MODEL_CPU:
         s.estimated_vram_gb = size * 0.7
     elif s.offload == OffloadMode.EXPERT_OFFLOAD and s.moe:

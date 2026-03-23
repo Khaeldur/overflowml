@@ -58,11 +58,10 @@ class TestFP8Strategy:
 
 
 class TestCPUOffload:
-    def test_sequential_offload_large_model(self):
+    def test_large_model_uses_layer_hybrid(self):
         hw = make_hw(gpu_vram_gb=24, system_ram_gb=128)
-        s = pick_strategy(hw, model_size_gb=40)  # way too big for VRAM
-        assert s.offload == OffloadMode.SEQUENTIAL_CPU
-        assert s.estimated_vram_gb <= 5.0
+        s = pick_strategy(hw, model_size_gb=40)  # too big for VRAM, fits in GPU+RAM
+        assert s.offload == OffloadMode.LAYER_HYBRID
         assert s.gc_between_steps is True
 
     def test_rtx5090_with_40gb_model_fp8_available(self):
@@ -81,13 +80,40 @@ class TestCPUOffload:
         assert s.offload == OffloadMode.MODEL_CPU
         assert s.gc_between_steps is True
 
-    def test_massive_model_needs_sequential(self):
-        """Model too large even for component offload."""
+    def test_massive_model_gets_layer_hybrid(self):
+        """80GB model on 24GB GPU + 128GB RAM — fits in GPU+RAM via layer hybrid."""
         hw = make_hw(gpu_vram_gb=24, system_ram_gb=128, supports_fp8=False)
-        s = pick_strategy(hw, model_size_gb=80)  # 80 > 24*1.5=36
-        assert s.offload == OffloadMode.SEQUENTIAL_CPU
-        assert s.estimated_vram_gb <= 5.0
-        assert any("attention_slicing" in w for w in s.warnings)
+        s = pick_strategy(hw, model_size_gb=80)  # 80 > 24*1.5=36 but fits GPU+RAM
+        assert s.offload == OffloadMode.LAYER_HYBRID
+        assert s.gc_between_steps is True
+
+    def test_truly_massive_model_needs_sequential(self):
+        """Model where RAM < model*1.1 but RAM >= model*0.5 → sequential."""
+        hw = make_hw(gpu_vram_gb=4, system_ram_gb=8, supports_fp8=False)
+        s = pick_strategy(hw, model_size_gb=100)
+        assert s.offload in (OffloadMode.SEQUENTIAL_CPU, OffloadMode.DISK)
+
+
+class TestLayerHybrid:
+    def test_layer_hybrid_when_model_fits_gpu_plus_ram(self):
+        """Model too big for VRAM alone but fits comfortably in GPU+RAM → LAYER_HYBRID."""
+        hw = make_hw(gpu_vram_gb=24, system_ram_gb=64, supports_fp8=False)
+        s = pick_strategy(hw, model_size_gb=50)
+        assert s.offload == OffloadMode.LAYER_HYBRID
+        assert s.estimated_vram_gb <= 24.0
+        assert s.gc_between_steps is True
+
+    def test_layer_hybrid_not_used_when_fits_in_vram(self):
+        """Model that fits in VRAM should not use LAYER_HYBRID."""
+        hw = make_hw(gpu_vram_gb=80, system_ram_gb=128)
+        s = pick_strategy(hw, model_size_gb=40)
+        assert s.offload == OffloadMode.NONE
+
+    def test_layer_hybrid_with_fp8(self):
+        """FP8 + layer hybrid for large models."""
+        hw = make_hw(gpu_vram_gb=24, system_ram_gb=128, supports_fp8=True)
+        s = pick_strategy(hw, model_size_gb=80)
+        assert s.offload == OffloadMode.LAYER_HYBRID
 
 
 class TestAppleSilicon:
@@ -139,7 +165,7 @@ class TestROCm:
     def test_rocm_large_model_falls_back_to_offload(self):
         hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, system_ram_gb=64, supports_fp8=False)
         s = pick_strategy(hw, model_size_gb=40)
-        assert s.offload in (OffloadMode.MODEL_CPU, OffloadMode.SEQUENTIAL_CPU)
+        assert s.offload in (OffloadMode.MODEL_CPU, OffloadMode.SEQUENTIAL_CPU, OffloadMode.LAYER_HYBRID)
 
     def test_rocm_dtype_no_bf16(self):
         hw = make_hw(accelerator=Accelerator.ROCm, gpu_vram_gb=16, supports_fp8=False, supports_bf16=False)

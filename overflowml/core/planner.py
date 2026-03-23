@@ -16,6 +16,9 @@ SPEED_TIERS = {
     ("fp8", "none", "none"): "fastest",
     ("none", "none", "auto"): "fast",
     ("fp8", "none", "auto"): "fast",
+    ("none", "layer_hybrid", "none"): "fast",
+    ("fp8", "layer_hybrid", "none"): "fast",
+    ("int4", "layer_hybrid", "none"): "medium",
     ("none", "model_cpu", "none"): "medium",
     ("fp8", "model_cpu", "none"): "medium",
     ("none", "model_cpu", "auto"): "medium",
@@ -127,7 +130,7 @@ def _generate_candidates(legacy_hw, model_size_gb: float) -> list[StrategyCandid
     ]
 
     # Force specific offload modes
-    for mode in [OffloadMode.NONE, OffloadMode.MODEL_CPU, OffloadMode.SEQUENTIAL_CPU]:
+    for mode in [OffloadMode.NONE, OffloadMode.MODEL_CPU, OffloadMode.LAYER_HYBRID, OffloadMode.SEQUENTIAL_CPU]:
         configs.append({"force_offload": mode})
 
     # Force quantization modes

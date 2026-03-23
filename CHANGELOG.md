@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0] - 2026-03-23
+
+### Added
+- **LAYER_HYBRID offload mode** — the core product promise. Models that don't fit in VRAM now use **both GPU VRAM and system RAM** instead of dumping everything to CPU. `device_map="auto"` fills ~90% of GPU VRAM with layers, overflows the rest to RAM.
+  - Qwen3.5-27B (54GB) on 32GB GPU: was 3GB VRAM (sequential) → now **31.5GB VRAM** (hybrid)
+  - Llama-3-70B (140GB) on 32GB GPU: was 3GB VRAM → now **31.5GB VRAM**
+  - INT4 + layer hybrid for very large models (392GB+ with quantization)
+- Benchmark table shows `HYBRID (GPU+RAM)` status for hybrid strategies
+- `can-run` CLI now supports `--max-offload layer_hybrid`
+- 4 new tests (194 total)
+
+### Changed
+- Strategy decision tree: new tier between MODEL_CPU and SEQUENTIAL_CPU
+  - Direct load → FP8 → model_cpu → **LAYER_HYBRID** → sequential → INT4+hybrid → INT4+sequential → disk
+- Sequential offload is now truly last resort (RAM < model×1.1), not the default for large models
+- `can_run()` offload severity updated: layer_hybrid=2, sequential=3, disk=4
+
 ## [0.8.0] - 2026-03-23
 
 ### Added

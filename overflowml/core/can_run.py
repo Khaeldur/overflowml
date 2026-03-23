@@ -12,8 +12,9 @@ _OFFLOAD_SEVERITY = {
     "none": 0,
     "model_cpu": 1,
     "expert_offload": 1,
-    "sequential_cpu": 2,
-    "disk": 3,
+    "layer_hybrid": 2,
+    "sequential_cpu": 3,
+    "disk": 4,
 }
 
 

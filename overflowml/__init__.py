@@ -1,6 +1,6 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 # --- New public API (preferred) ---
 from . import doctor

@@ -64,7 +64,7 @@ def main():
     canrun = sub.add_parser("can-run", help="Check if a model can run on this hardware (CI/CD gating)")
     canrun.add_argument("model_size", type=str, help="Model size in GB or HuggingFace model ID")
     canrun.add_argument("--max-offload", type=str, default="sequential_cpu",
-                        choices=["none", "model_cpu", "sequential_cpu", "disk"],
+                        choices=["none", "model_cpu", "layer_hybrid", "sequential_cpu", "disk"],
                         help="Maximum acceptable offload mode (default: sequential_cpu)")
     canrun.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
     canrun.add_argument("--trust-remote-code", action="store_true")
@@ -574,6 +574,8 @@ def _run_benchmark(args):
             status = "MULTI-GPU"
         elif s.offload == OffloadMode.NONE:
             status = "FAST"
+        elif s.offload == OffloadMode.LAYER_HYBRID:
+            status = "HYBRID (GPU+RAM)"
         elif s.offload == OffloadMode.MODEL_CPU:
             status = "OK (offload)"
         elif s.offload == OffloadMode.SEQUENTIAL_CPU:

@@ -179,7 +179,12 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
             logger.info("Skipping FP8 (incompatible with CPU offload)")
 
     # --- Offloading
-    if strategy.offload == OffloadMode.SEQUENTIAL_CPU:
+    if strategy.offload == OffloadMode.LAYER_HYBRID:
+        # Layer-split hybrid: fill GPU VRAM, overflow to RAM
+        pipe.enable_model_cpu_offload()
+        if verbose:
+            logger.info("Layer hybrid: GPU VRAM + CPU RAM split (model_cpu_offload for diffusers)")
+    elif strategy.offload == OffloadMode.SEQUENTIAL_CPU:
         pipe.enable_sequential_cpu_offload()
         if verbose:
             logger.info("Sequential CPU offload: 1 layer at a time (~3GB VRAM)")
