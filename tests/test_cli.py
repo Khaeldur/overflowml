@@ -79,6 +79,39 @@ class TestCLIHelp:
         assert r.returncode == 0
 
 
+class TestCLIValidation:
+    def test_benchmark_rejects_zero_custom(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "benchmark", "--custom", "0"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode != 0
+        assert "positive" in r.stderr
+
+    def test_benchmark_rejects_negative_custom(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "benchmark", "--custom", "--", "-5"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode != 0
+
+    def test_moe_rejects_active_gt_total(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "120", "--moe", "100", "200", "128", "8"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode != 0
+        assert "active_params_b" in r.stderr
+
+    def test_moe_rejects_active_experts_gt_total(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "120", "--moe", "120", "12", "8", "16"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode != 0
+        assert "active_experts" in r.stderr
+
+
 class TestPlanMoE:
     def test_plan_with_moe(self):
         r = subprocess.run(

@@ -170,7 +170,8 @@ def _apply_strategy(pipe: Any, strategy: Strategy, hw: HardwareProfile,
         if verbose:
             logger.info("Model CPU offload: components move to GPU on demand")
     elif strategy.offload == OffloadMode.NONE:
-        pipe.to(_pick_device(hw))
+        device = _pick_device(hw)
+        pipe.to(device)
         if verbose:
             logger.info("Model on %s", device)
 
@@ -282,7 +283,7 @@ class MemoryGuard:
                 torch.cuda.empty_cache()
                 reserved_gb = torch.cuda.memory_reserved() / 1024 ** 3
                 total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-                usage = reserved_gb / total_gb
+                usage = reserved_gb / total_gb if total_gb > 0 else 0.0
                 if usage > self.threshold:
                     if self.verbose:
                         logger.info("VRAM %.0f%% — deep cleanup", usage * 100)

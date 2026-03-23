@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.1] - 2026-03-23
+
+### Security
+- `trust-remote-code` warning now prints to stderr (not lost in stdout redirects)
+- Disk offload path uses `~/.cache/overflowml/offload/` instead of hardcoded relative `offload_cache` in CWD; configurable via `OVERFLOWML_OFFLOAD_DIR` env var
+
+### Fixed
+- **NameError crash**: `optimize.py` `_apply_strategy()` referenced undefined `device` variable when verbose=True and no offload — would crash at runtime
+- **ZeroDivisionError**: MemoryGuard could divide by zero if GPU reported 0 total memory
+- **IndexError**: `_max_memory_map()` crashed if `gpu_vram_gbs` list was shorter than `num_gpus`
+- **HardwareProfile**: `__post_init__` now auto-pads `gpu_vram_gbs` if mismatched with `num_gpus`
+- `_max_memory_map()` no longer allocates 8GB CPU when system has 0 RAM
+
+### Added
+- CLI input validation: MoE params reject `active > total`, benchmark `--custom` rejects zero/negative sizes
+- 7 new edge case tests (92 total): zero VRAM GPU, MoE validation, mismatched GPU list, zero RAM
+
 ## [0.5.0] - 2026-03-23
 
 ### Fixed

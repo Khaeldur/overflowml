@@ -134,3 +134,15 @@ class TestMemoryGuard:
             guard.__enter__()
             guard.__exit__(None, None, None)
             assert mock_gc.called
+
+    def test_exit_handles_zero_vram_gpu(self):
+        """MemoryGuard should not crash if GPU reports 0 total memory."""
+        guard = MemoryGuard()
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.memory_reserved.return_value = 0
+        props = MagicMock()
+        props.total_memory = 0  # edge case: 0 VRAM
+        mock_torch.cuda.get_device_properties.return_value = props
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            guard.__exit__(None, None, None)  # should not raise ZeroDivisionError

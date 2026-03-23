@@ -39,6 +39,8 @@ class HardwareProfile:
     def __post_init__(self):
         if self.total_gpu_vram_gb == 0.0 and self.gpu_vram_gb > 0:
             self.total_gpu_vram_gb = self.gpu_vram_gb
+        if self.gpu_vram_gbs and len(self.gpu_vram_gbs) != self.num_gpus:
+            self.gpu_vram_gbs = self.gpu_vram_gbs[:self.num_gpus] + [self.gpu_vram_gb] * max(0, self.num_gpus - len(self.gpu_vram_gbs))
 
     @property
     def overflow_gb(self) -> float:

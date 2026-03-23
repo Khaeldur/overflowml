@@ -56,6 +56,21 @@ def main():
     if args.command == "plan" and args.model_size <= 0:
         parser.error("model size must be positive")
 
+    if args.command == "plan" and hasattr(args, "moe") and args.moe:
+        total_b, active_b = float(args.moe[0]), float(args.moe[1])
+        n_experts, n_active = int(args.moe[2]), int(args.moe[3])
+        if total_b <= 0 or active_b <= 0 or n_experts <= 0 or n_active <= 0:
+            parser.error("all MoE parameters must be positive")
+        if active_b > total_b:
+            parser.error("active_params_b must be <= total_params_b")
+        if n_active > n_experts:
+            parser.error("active_experts must be <= num_experts")
+
+    if args.command == "benchmark" and args.custom:
+        for size in args.custom:
+            if size <= 0:
+                parser.error("custom model sizes must be positive")
+
     if args.command == "detect":
         hw = detect_hardware()
         print("\n=== OverflowML Hardware Detection ===")
@@ -136,7 +151,8 @@ def main():
     elif args.command == "load":
         if args.trust_remote_code:
             print("WARNING: --trust-remote-code downloads and executes arbitrary Python "
-                  "code from the model repository. Only use with models you trust.")
+                  "code from the model repository. Only use with models you trust.",
+                  file=sys.stderr)
         from .transformers_ext import load_model
         model, tok = load_model(
             args.model_name,

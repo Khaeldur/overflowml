@@ -86,3 +86,14 @@ class TestMaxMemoryMap:
         hw = make_hw(gpu_vram_gb=24, gpu_vram_gbs=[24.0])
         mem = _max_memory_map(hw, reserve_gpu_gb=8)
         assert "16GiB" in mem[0]
+
+    def test_mismatched_gpu_list_no_crash(self):
+        hw = make_hw(gpu_vram_gb=24, num_gpus=4, gpu_vram_gbs=[24.0], total_gpu_vram_gb=96.0)
+        mem = _max_memory_map(hw)
+        assert 0 in mem
+        assert 3 in mem  # should still produce entries for all 4 GPUs
+
+    def test_zero_ram(self):
+        hw = make_hw(gpu_vram_gb=24, gpu_vram_gbs=[24.0], system_ram_gb=0)
+        mem = _max_memory_map(hw)
+        assert "cpu" not in mem  # no CPU allocation when 0 RAM

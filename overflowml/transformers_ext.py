@@ -122,8 +122,12 @@ def load_model(
         kwargs["device_map"] = "auto"
         kwargs["max_memory"] = _max_memory_map(hw)
     elif strategy.offload == OffloadMode.DISK:
+        import os
         kwargs["device_map"] = "auto"
-        kwargs["offload_folder"] = "offload_cache"
+        kwargs["offload_folder"] = os.environ.get(
+            "OVERFLOWML_OFFLOAD_DIR",
+            os.path.join(os.path.expanduser("~"), ".cache", "overflowml", "offload"),
+        )
         kwargs["max_memory"] = _max_memory_map(hw, reserve_gpu_gb=2)
 
     # Resolve model class
@@ -228,11 +232,12 @@ def _max_memory_map(hw: HardwareProfile, reserve_gpu_gb: float = 4) -> dict:
     mem = {}
     if hw.accelerator in (Accelerator.CUDA, Accelerator.ROCm):
         for i in range(hw.num_gpus):
-            per_gpu_vram = hw.gpu_vram_gbs[i] if hw.gpu_vram_gbs else hw.gpu_vram_gb
+            per_gpu_vram = hw.gpu_vram_gbs[i] if (hw.gpu_vram_gbs and i < len(hw.gpu_vram_gbs)) else hw.gpu_vram_gb
             usable = max(1, per_gpu_vram - reserve_gpu_gb)
             mem[i] = f"{int(usable)}GiB"
-    usable_cpu = max(8, hw.system_ram_gb - 16)
-    mem["cpu"] = f"{int(usable_cpu)}GiB"
+    usable_cpu = max(1, hw.system_ram_gb - 16) if hw.system_ram_gb > 0 else 0
+    if usable_cpu > 0:
+        mem["cpu"] = f"{int(usable_cpu)}GiB"
     return mem
 
 
