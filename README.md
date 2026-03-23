@@ -13,8 +13,12 @@ OverflowML auto-detects your hardware (NVIDIA, Apple Silicon, AMD, CPU) and appl
 import overflowml
 
 pipe = load_your_model()  # 40GB model, 24GB GPU? No problem.
-overflowml.optimize_pipeline(pipe, model_size_gb=40)
-result = pipe(prompt)     # Just works.
+strategy = overflowml.optimize_pipeline(pipe, model_size_gb=40)
+result = pipe(prompt)     # Just works — strategy + batch size auto-selected.
+
+# Auto-batching: fills remaining VRAM without OOM
+for batch in overflowml.auto_batch(prompts, pipe):
+    results = pipe(batch)
 ```
 
 ## The Problem
@@ -25,24 +29,27 @@ The current solutions are painful:
 - **Manual offloading** — you need to know which PyTorch function to call, which flags work together, and which combinations crash
 - **Quantization footguns** — FP8 is incompatible with CPU offload on Windows. Attention slicing crashes with sequential offload. INT4 needs specific libraries.
 - **Trial and error** — every hardware/model/framework combo has different gotchas
+- **Batch size guessing** — set it too low and waste GPU, too high and OOM crash
 
 OverflowML handles all of this automatically.
 
 ## How It Works
 
 ```
-Model: 40GB (BF16)          Your GPU: 24GB VRAM
-         │                           │
-    OverflowML detects mismatch      │
-         │                           │
-    ┌────▼────────────────────────────▼────┐
-    │  Strategy: Sequential CPU Offload    │
-    │  Move 1 layer (~1GB) to GPU at a    │
-    │  time, compute, move back.          │
-    │  Peak VRAM: ~3GB                     │
-    │  System RAM used: ~40GB              │
-    │  Speed: 33s/image (RTX 5090)        │
-    └──────────────────────────────────────┘
+Model: 70GB (BF16)          Your GPU: 24GB VRAM + 64GB RAM
+         |                           |
+    OverflowML detects mismatch      |
+         |                           |
+    +----v----------------------------v----+
+    |  Strategy: Layer Hybrid              |
+    |  Fill GPU with layers (~22GB)        |
+    |  Overflow rest to RAM (~48GB)        |
+    |  Peak VRAM: ~22GB (90% utilized)     |
+    |  Auto-batch: 2 images at a time      |
+    |  Known traps avoided:                |
+    |    - FP8+offload crash (Windows)     |
+    |    - attention_slicing conflict       |
+    +--------------------------------------+
 ```
 
 ### Strategy Decision Tree
@@ -50,10 +57,12 @@ Model: 40GB (BF16)          Your GPU: 24GB VRAM
 | Model vs VRAM | Strategy | Peak VRAM | Speed |
 |---------------|----------|-----------|-------|
 | Model fits with 15% headroom | Direct GPU load | Full | Fastest |
-| FP8 model fits | FP8 quantization | ~55% of model | Fast |
+| FP8 model fits | FP8 quantization | ~55% of model | Fastest |
 | Components fit individually | Model CPU offload | ~70% of model | Medium |
-| Nothing fits | Sequential CPU offload | ~3GB | Slower but works |
-| Not enough RAM either | INT4 quantization + sequential | ~3GB | Slowest |
+| **Model fits in GPU + RAM** | **Layer hybrid (GPU+RAM split)** | **~90% of GPU** | **Fast** |
+| INT4 fits in GPU + RAM | INT4 + layer hybrid | ~90% of GPU | Medium |
+| RAM barely enough | Sequential CPU offload | ~3GB | Slow |
+| Not enough RAM either | INT4 + sequential | ~3GB | Slowest |
 
 ### Apple Silicon (Unified Memory)
 
