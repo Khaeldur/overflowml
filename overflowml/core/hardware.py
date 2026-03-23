@@ -109,7 +109,10 @@ def _detect_torch(hw: HardwareInfo) -> None:
 
 def hardware_info_to_legacy(hw_info: HardwareInfo):
     """Convert new HardwareInfo to legacy HardwareProfile for backward compat."""
-    from ..detect import Accelerator, HardwareProfile
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from ..detect import Accelerator, HardwareProfile
 
     backend_map = {
         "cuda": Accelerator.CUDA,

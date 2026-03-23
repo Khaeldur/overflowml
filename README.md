@@ -249,10 +249,22 @@ These are automatically handled by OverflowML's strategy engine:
 
 ```
 overflowml/
-├── detect.py      — Hardware detection (CUDA, MPS, MLX, ROCm, CPU)
-├── strategy.py    — Strategy engine (picks optimal offload + quantization)
-├── optimize.py    — Applies strategy to pipelines and models
-└── cli.py         — Command-line interface
+├── core/
+│   ├── types.py       — Data contracts (ModelInfo, HardwareInfo, PlanResult, etc.)
+│   ├── hardware.py    — Hardware detection → HardwareInfo
+│   ├── planner.py     — plan(), compare_strategies() → PlanResult
+│   ├── explain.py     — Gotcha-aware reasoning builder
+│   └── can_run.py     — CI/CD gating API
+├── inspect/
+│   ├── hf_probe.py    — HF Hub metadata probing (no weight downloads)
+│   ├── model_estimator.py — inspect_model() → ModelInfo
+│   └── arch_registry.py   — Architecture classification
+├── doctor/
+│   ├── checks.py      — Environment health checks
+│   └── report.py      — run() → DoctorReport
+├── strategy.py        — Strategy decision tree (gotcha knowledge)
+├── optimize.py        — Applies strategy to pipelines and models
+└── cli.py             — All CLI commands
 ```
 
 ## Cross-Platform Support

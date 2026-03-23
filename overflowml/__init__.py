@@ -1,11 +1,12 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 # --- New public API (preferred) ---
 from . import doctor
 from .inspect import inspect_model
 from .core.planner import plan
+from .core.can_run import can_run
 from .core.types import (
     ModelInfo,
     HardwareInfo,
@@ -18,9 +19,12 @@ from .core.types import (
 )
 
 # --- Legacy API (still supported) ---
-from .detect import detect_hardware, HardwareProfile
-from .strategy import pick_strategy, Strategy, DistributionMode, MoEProfile, plan_llamacpp, get_moe_profile, MOE_REGISTRY
-from .optimize import optimize_pipeline, optimize_model, MemoryGuard
+import warnings as _w
+with _w.catch_warnings():
+    _w.simplefilter("ignore", DeprecationWarning)
+    from .detect import detect_hardware, HardwareProfile
+    from .strategy import pick_strategy, Strategy, DistributionMode, MoEProfile, plan_llamacpp, get_moe_profile, MOE_REGISTRY
+    from .optimize import optimize_pipeline, optimize_model, MemoryGuard
 
 
 def load_model(*args, **kwargs):
@@ -34,6 +38,7 @@ __all__ = [
     "doctor",
     "inspect_model",
     "plan",
+    "can_run",
     "ModelInfo",
     "HardwareInfo",
     "StrategyCandidate",

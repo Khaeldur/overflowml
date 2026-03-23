@@ -9,6 +9,7 @@ from .types import (
     StrategyCandidate,
 )
 from .hardware import detect_hardware_info
+from .can_run import can_run
 
 __all__ = [
     "CanRunResult",
@@ -20,4 +21,5 @@ __all__ = [
     "PlanResult",
     "StrategyCandidate",
     "detect_hardware_info",
+    "can_run",
 ]

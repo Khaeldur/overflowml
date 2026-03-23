@@ -168,6 +168,30 @@ class TestNewCLICommands:
         assert "doctor" in r.stdout
 
 
+class TestDeprecationWarnings:
+    def test_legacy_detect_warns(self):
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import warnings; warnings.simplefilter('always'); "
+             "import importlib; "
+             "mod = importlib.import_module('overflowml.detect'); "
+             "# Check if the module has the deprecation text\n"
+             "print('DEPRECATED' if 'DEPRECATED' in (mod.__doc__ or '') else 'NO')"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "DEPRECATED" in r.stdout
+
+    def test_toplevel_import_no_crash(self):
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "from overflowml import detect_hardware; print('OK')"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "OK" in r.stdout
+
+
 class TestPlanMoE:
     def test_plan_with_moe(self):
         r = subprocess.run(

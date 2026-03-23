@@ -99,3 +99,35 @@ class TestBuildExplanation:
         lines = build_explanation(10.0, hw, rec, [rec])
         text = "\n".join(lines)
         assert "No GPU" in text
+
+    def test_always_has_trap_context(self):
+        """Identity contract: every explanation must reference at least one trap."""
+        hw = HardwareInfo(
+            gpus=[GPUInfo(name="Big GPU", total_vram_gb=80, backend="cuda")],
+            total_ram_gb=128, platform="Linux-x86_64", supports_fp8=True,
+        )
+        rec = StrategyCandidate(name="fp16 direct load")
+        lines = build_explanation(10.0, hw, rec, [rec])
+        text = "\n".join(lines)
+        assert "trap" in text.lower() or "checked" in text.lower() or "incompatib" in text.lower()
+
+    def test_trap_context_on_linux_direct_load(self):
+        """Regression: Linux + direct load used to show zero traps."""
+        hw = HardwareInfo(
+            gpus=[GPUInfo(name="A100", total_vram_gb=80, backend="cuda")],
+            total_ram_gb=256, platform="Linux-x86_64", supports_fp8=True,
+        )
+        rec = StrategyCandidate(name="fp16 direct load")
+        lines = build_explanation(10.0, hw, rec, [rec])
+        text = "\n".join(lines)
+        assert "Known traps handled:" in text
+
+    def test_trap_context_on_mac(self):
+        hw = HardwareInfo(
+            gpus=[GPUInfo(name="Apple M4", total_vram_gb=128, backend="mps")],
+            total_ram_gb=128, platform="Darwin-arm64", unified_memory=True,
+        )
+        rec = StrategyCandidate(name="fp16 direct load")
+        lines = build_explanation(10.0, hw, rec, [rec])
+        text = "\n".join(lines)
+        assert "Known traps handled:" in text

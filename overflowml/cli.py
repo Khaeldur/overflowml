@@ -9,8 +9,11 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from .detect import detect_hardware
-from .strategy import DistributionMode, MoEProfile, OffloadMode, pick_strategy, plan_llamacpp
+import warnings as _w
+with _w.catch_warnings():
+    _w.simplefilter("ignore", DeprecationWarning)
+    from .detect import detect_hardware
+    from .strategy import DistributionMode, MoEProfile, OffloadMode, pick_strategy, plan_llamacpp
 
 
 def main():
@@ -56,6 +59,15 @@ def main():
     doc.add_argument("--model-size-gb", type=float, default=None, help="Check fit for a specific size")
     doc.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
 
+    # --- can-run
+    canrun = sub.add_parser("can-run", help="Check if a model can run on this hardware (CI/CD gating)")
+    canrun.add_argument("model_size", type=str, help="Model size in GB or HuggingFace model ID")
+    canrun.add_argument("--max-offload", type=str, default="sequential_cpu",
+                        choices=["none", "model_cpu", "sequential_cpu", "disk"],
+                        help="Maximum acceptable offload mode (default: sequential_cpu)")
+    canrun.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
+    canrun.add_argument("--trust-remote-code", action="store_true")
+
     # --- benchmark
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
     bench.add_argument("--custom", type=float, nargs="+", metavar="GB",
@@ -89,6 +101,8 @@ def main():
         _cmd_plan(args)
     elif args.command == "doctor":
         _cmd_doctor(args)
+    elif args.command == "can-run":
+        _cmd_can_run(args)
     elif args.command == "benchmark":
         _run_benchmark(args)
     elif args.command == "load":
@@ -330,6 +344,37 @@ def _cmd_doctor(args):
         print(f"\nSuggested fixes:")
         for cmd in report.fix_commands:
             print(f"  {cmd}")
+    print()
+
+
+def _cmd_can_run(args):
+    from .core.can_run import can_run
+
+    model_or_size = args.model_size
+    try:
+        model_or_size = float(args.model_size)
+    except ValueError:
+        pass
+
+    result = can_run(
+        model_or_size,
+        max_offload=args.max_offload,
+        trust_remote_code=getattr(args, "trust_remote_code", False),
+    )
+
+    if args.json_output:
+        import dataclasses
+        print(json.dumps(dataclasses.asdict(result), indent=2, default=str))
+        return
+
+    status = "YES" if result.ok else "NO"
+    print(f"\n{status}: {result.reason}")
+    if result.recommended_strategy:
+        print(f"Strategy: {result.recommended_strategy}")
+    print(f"Hardware: {result.detected_vram_gb:.0f}GB VRAM, {result.detected_ram_gb:.0f}GB RAM")
+
+    if not result.ok:
+        sys.exit(1)
     print()
 
 

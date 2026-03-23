@@ -1,6 +1,18 @@
-"""Hardware detection — GPU, CPU, RAM, platform."""
+"""Hardware detection — GPU, CPU, RAM, platform.
+
+DEPRECATED: Use overflowml.core.hardware instead.
+This module is kept for backward compatibility and will be removed in v1.0.
+"""
 
 from __future__ import annotations
+
+import warnings as _warnings
+_warnings.warn(
+    "overflowml.detect is deprecated; use overflowml.core.hardware instead. "
+    "This module will be removed in v1.0.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import platform
 import sys

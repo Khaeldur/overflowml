@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.1] - 2026-03-23
+
+### Fixed
+- **Explanation contract**: Every plan output now references at least one trap checked, even on Linux/macOS direct-load (was showing zero traps)
+- **`can_run()` RAM check**: Models too large even with INT4 for available RAM now correctly return `ok=False`
+
+### Added
+- **`can_run()` function**: `from overflowml import can_run` — CI/CD gating API with `max_offload` parameter
+- **`overflowml can-run` CLI**: `overflowml can-run 40 --json` exits 1 if model can't run
+- **`huggingface_hub` optional dep**: `pip install overflowml[hub]` for model inspection without full transformers
+- **Deprecation warnings**: `overflowml.detect` and `overflowml.optimize` emit `DeprecationWarning` on direct import (suppressed when using top-level API)
+- 18 new tests (166 total)
+
+### Changed
+- README Architecture section updated to show new `core/`/`inspect/`/`doctor/` structure
+- Removed empty placeholder packages (`monitor/`, `integrations/`, `benchmark/`, `utils/`)
+
 ## [0.6.0] - 2026-03-23
 
 ### Added

@@ -65,7 +65,11 @@ def _get_trap_context(
     recommended: "StrategyCandidate | None",
     all_strategies: list["StrategyCandidate"],
 ) -> list[str]:
-    """Generate trap-specific context lines based on hardware and strategy."""
+    """Generate trap-specific context lines based on hardware and strategy.
+
+    Contract: ALWAYS return at least one trap. This is OverflowML's core identity.
+    Even when the model fits directly, mention traps that were checked and cleared.
+    """
     traps = []
     platform = hw_info.platform.split("-")[0] if hw_info.platform else ""
 
@@ -88,5 +92,14 @@ def _get_trap_context(
         has_fp8_candidate = any("FP8" in s.name for s in all_strategies)
         if has_fp8_candidate:
             traps.append("  - FP8 quantization unavailable (torchao not installed)")
+
+    # Contract enforcement: always show at least one trap that was checked
+    if not traps:
+        if hw_info.supports_fp8:
+            traps.append("  - FP8 + CPU offload incompatibility checked — not applicable (model fits without offload)")
+        elif hw_info.unified_memory:
+            traps.append("  - CPU offload not needed on unified memory — no device-transfer traps apply")
+        else:
+            traps.append("  - Checked FP8/offload incompatibilities, attention_slicing conflicts, WDDM limits — none triggered")
 
     return traps

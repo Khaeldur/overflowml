@@ -1,6 +1,18 @@
-"""Apply optimization strategy to models and pipelines."""
+"""Apply optimization strategy to models and pipelines.
+
+DEPRECATED: Direct imports from overflowml.optimize will be removed in v1.0.
+Use overflowml.optimize_pipeline and overflowml.optimize_model from the top-level package.
+"""
 
 from __future__ import annotations
+
+import warnings as _warnings
+_warnings.warn(
+    "Direct import from overflowml.optimize is deprecated. "
+    "Use 'from overflowml import optimize_pipeline' instead. Will be removed in v1.0.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import gc
 import logging
