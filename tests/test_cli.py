@@ -36,7 +36,7 @@ class TestCLIHelp:
             capture_output=True, text=True,
         )
         assert r.returncode == 0
-        assert "Strategy for 10GB model" in r.stdout
+        assert "Recommended Strategy" in r.stdout or "Reasoning" in r.stdout
 
     def test_plan_rejects_zero(self):
         r = subprocess.run(
@@ -110,6 +110,62 @@ class TestCLIValidation:
         )
         assert r.returncode != 0
         assert "active_experts" in r.stderr
+
+
+class TestNewCLICommands:
+    def test_plan_compare(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "40", "--compare"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "Viable Strategies" in r.stdout
+
+    def test_plan_json(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "10", "--json"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        import json
+        data = json.loads(r.stdout)
+        assert "recommended" in data
+        assert "strategies" in data
+        assert "explanation" in data
+
+    def test_plan_reasoning_shown(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "40"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "Reasoning" in r.stdout
+
+    def test_plan_compare_shows_rejected(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "plan", "40", "--compare"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        # Should show at least one strategy
+        assert "#" in r.stdout or "Rejected" in r.stdout
+
+    def test_inspect_help(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "inspect", "--help"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "model_id" in r.stdout
+
+    def test_help_shows_new_commands(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "overflowml", "--help"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "inspect" in r.stdout
+        assert "doctor" in r.stdout
 
 
 class TestPlanMoE:

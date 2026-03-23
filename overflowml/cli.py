@@ -1,6 +1,7 @@
-"""CLI tool for hardware detection and strategy recommendation."""
+"""CLI tool for hardware detection, model inspection, and strategy planning."""
 
 import argparse
+import json
 import logging
 import sys
 
@@ -18,8 +19,10 @@ def main():
         description="OverflowML — Run AI models larger than your GPU",
         epilog="Examples:\n"
                "  overflowml detect\n"
+               "  overflowml inspect meta-llama/Llama-3-70B\n"
                "  overflowml plan 40\n"
-               "  overflowml plan 120 --moe 120 12 128 8\n"
+               "  overflowml plan meta-llama/Llama-3-70B --compare\n"
+               "  overflowml doctor\n"
                "  overflowml benchmark --custom 70 140\n"
                "  overflowml load meta-llama/Llama-3-8B --chat\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -29,13 +32,29 @@ def main():
     # --- detect
     sub.add_parser("detect", help="Detect hardware and show capabilities")
 
+    # --- inspect
+    insp = sub.add_parser("inspect", help="Inspect a model and estimate memory footprint")
+    insp.add_argument("model_id", help="HuggingFace model ID (e.g., meta-llama/Llama-3-70B)")
+    insp.add_argument("--trust-remote-code", action="store_true")
+    insp.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
+
     # --- plan
     plan = sub.add_parser("plan", help="Plan optimal loading strategy for a model")
-    plan.add_argument("model_size", type=float, help="Model size in GB (BF16 weights, must be > 0)")
+    plan.add_argument("model_size", type=str, help="Model size in GB or HuggingFace model ID")
     plan.add_argument("--fast", action="store_true", help="Prefer speed over VRAM savings")
     plan.add_argument("--no-quantize", action="store_true", help="Disable quantization")
+    plan.add_argument("--compare", action="store_true", help="Show all viable strategies")
+    plan.add_argument("--assume-size-gb", type=float, default=None, help="Override auto-detected model size")
+    plan.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
     plan.add_argument("--moe", nargs=4, metavar=("TOTAL_B", "ACTIVE_B", "EXPERTS", "ACTIVE_EXPERTS"),
                        help="MoE config: total_params_B active_params_B num_experts active_experts")
+    plan.add_argument("--trust-remote-code", action="store_true")
+
+    # --- doctor
+    doc = sub.add_parser("doctor", help="Check environment health for AI model loading")
+    doc.add_argument("--model", type=str, default=None, help="Check fit for a specific model ID")
+    doc.add_argument("--model-size-gb", type=float, default=None, help="Check fit for a specific size")
+    doc.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
 
     # --- benchmark
     bench = sub.add_parser("benchmark", help="Show what models your hardware can run and how")
@@ -53,10 +72,46 @@ def main():
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    if args.command == "plan" and args.model_size <= 0:
-        parser.error("model size must be positive")
+    # --- Validation ---
+    if args.command == "plan":
+        _validate_plan_args(args, parser)
+    if args.command == "benchmark" and hasattr(args, "custom") and args.custom:
+        for size in args.custom:
+            if size <= 0:
+                parser.error("custom model sizes must be positive")
 
-    if args.command == "plan" and hasattr(args, "moe") and args.moe:
+    # --- Dispatch ---
+    if args.command == "detect":
+        _cmd_detect()
+    elif args.command == "inspect":
+        _cmd_inspect(args)
+    elif args.command == "plan":
+        _cmd_plan(args)
+    elif args.command == "doctor":
+        _cmd_doctor(args)
+    elif args.command == "benchmark":
+        _run_benchmark(args)
+    elif args.command == "load":
+        _cmd_load(args)
+    else:
+        parser.print_help()
+
+
+def _validate_plan_args(args, parser):
+    # Check if model_size is numeric
+    try:
+        size = float(args.model_size)
+        if size <= 0:
+            parser.error("model size must be positive")
+    except ValueError:
+        pass  # it's a model ID, validated later
+
+    if args.moe:
+        # MoE requires numeric model_size
+        try:
+            float(args.model_size)
+        except ValueError:
+            parser.error("--moe requires a numeric model size (e.g., overflowml plan 120 --moe ...)")
         total_b, active_b = float(args.moe[0]), float(args.moe[1])
         n_experts, n_active = int(args.moe[2]), int(args.moe[3])
         if total_b <= 0 or active_b <= 0 or n_experts <= 0 or n_active <= 0:
@@ -66,130 +121,254 @@ def main():
         if n_active > n_experts:
             parser.error("active_experts must be <= num_experts")
 
-    if args.command == "benchmark" and args.custom:
-        for size in args.custom:
-            if size <= 0:
-                parser.error("custom model sizes must be positive")
 
-    if args.command == "detect":
-        hw = detect_hardware()
-        print("\n=== OverflowML Hardware Detection ===")
-        print(hw.summary())
-        print(f"\nFor a model that needs loading, run:")
-        print(f"  overflowml plan <size_in_gb>")
-        print()
+# ---- Command handlers ----
 
-    elif args.command == "plan":
-        hw = detect_hardware()
-        print("\n=== Hardware ===")
-        print(hw.summary())
-        print()
+def _cmd_detect():
+    hw = detect_hardware()
+    print("\n=== OverflowML Hardware Detection ===")
+    print(hw.summary())
+    print(f"\nFor a model that needs loading, run:")
+    print(f"  overflowml plan <model_or_size>")
+    print()
 
-        moe_profile = None
-        if args.moe:
-            total_b, active_b, n_experts, n_active = float(args.moe[0]), float(args.moe[1]), int(args.moe[2]), int(args.moe[3])
-            # Estimate shared vs expert split (typically ~30% shared, ~70% experts for large MoE)
-            shared_ratio = 0.30
-            shared_gb = args.model_size * shared_ratio
-            expert_gb = args.model_size * (1.0 - shared_ratio)
-            moe_profile = MoEProfile(
-                total_params_b=total_b,
-                active_params_b=active_b,
-                num_experts=n_experts,
-                num_active_experts=n_active,
-                shared_layers_gb=shared_gb,
-                expert_size_gb=expert_gb,
-            )
 
-        strategy = pick_strategy(
-            hw, args.model_size,
-            prefer_speed=args.fast,
-            allow_quantization=not args.no_quantize,
-            moe=moe_profile,
-        )
-        print(f"=== Strategy for {args.model_size:.0f}GB model ===")
-        if moe_profile:
-            print(f"MoE: {moe_profile.total_params_b:.0f}B total, {moe_profile.active_params_b:.0f}B active, "
-                  f"{moe_profile.num_experts} experts ({moe_profile.num_active_experts} active)")
-            print(f"Sparsity: {moe_profile.sparsity_ratio:.0%}")
-            print()
-        print(strategy.summary())
-        print()
+def _cmd_inspect(args):
+    from .inspect import inspect_model
+    info = inspect_model(args.model_id, trust_remote_code=args.trust_remote_code)
 
-        if strategy.llamacpp_flags:
-            print("=== llama.cpp Launch ===")
-            print("llama-server " + " ".join(strategy.llamacpp_flags) + " -m <model.gguf>")
-            print()
+    if args.json_output:
+        import dataclasses
+        print(json.dumps(dataclasses.asdict(info), indent=2))
+        return
 
-        # Show code example
-        print("=== Usage ===")
-        if moe_profile:
-            print("```python")
-            print("import overflowml")
-            print()
-            print(f"moe = overflowml.MoEProfile(")
-            print(f"    total_params_b={moe_profile.total_params_b}, active_params_b={moe_profile.active_params_b},")
-            print(f"    num_experts={moe_profile.num_experts}, num_active_experts={moe_profile.num_active_experts},")
-            print(f"    shared_layers_gb={moe_profile.shared_layers_gb:.1f}, expert_size_gb={moe_profile.expert_size_gb:.1f},")
-            print(f")")
-            print(f"strategy = overflowml.pick_strategy(hw, {args.model_size}, moe=moe)")
-            print("```")
-        else:
-            print("```python")
-            print("import overflowml")
-            print("from diffusers import SomePipeline")
-            print()
-            print('pipe = SomePipeline.from_pretrained("model", torch_dtype=torch.bfloat16)')
-            print(f"strategy = overflowml.optimize_pipeline(pipe, model_size_gb={args.model_size})")
-            print("result = pipe(prompt)")
-            print("```")
-        print()
+    print(f"\nModel: {info.model_id}")
+    if info.architecture:
+        print(f"Architecture: {info.architecture}")
+    if info.task_family != "unknown":
+        print(f"Task: {info.task_family}")
+    if info.param_count:
+        print(f"Estimated params: {info.param_count / 1e9:.1f}B")
+    if info.estimated_sizes_gb:
+        print("Estimated weights:")
+        for dtype, size in info.estimated_sizes_gb.items():
+            print(f"  {dtype:>5}: {size:>7.1f} GB")
+    print(f"Source: {info.source}")
+    print(f"Confidence: {info.confidence}")
+    if info.notes:
+        for n in info.notes:
+            print(f"  {n}")
+    print()
 
-    elif args.command == "benchmark":
-        _run_benchmark(args)
 
-    elif args.command == "load":
-        if args.trust_remote_code:
-            print("WARNING: --trust-remote-code downloads and executes arbitrary Python "
-                  "code from the model repository. Only use with models you trust.",
-                  file=sys.stderr)
-        from .transformers_ext import load_model
-        model, tok = load_model(
-            args.model_name,
-            model_size_gb=args.size,
-            trust_remote_code=args.trust_remote_code,
-        )
-        print(f"\nModel loaded: {args.model_name}")
-        print(f"Type: {type(model).__name__}")
-        if hasattr(model, "hf_device_map"):
-            devices = set(str(v) for v in model.hf_device_map.values())
-            print(f"Devices: {', '.join(sorted(devices))}")
+def _cmd_plan(args):
+    from .core.planner import plan as do_plan
 
-        if args.chat:
-            print("\n=== Chat (type 'quit' to exit) ===\n")
-            import torch
-            while True:
-                try:
-                    user_input = input("You: ")
-                except (EOFError, KeyboardInterrupt):
-                    break
-                if user_input.strip().lower() in ("quit", "exit", "q"):
-                    break
-                inputs = tok(user_input, return_tensors="pt").to(model.device)
-                with torch.inference_mode():
-                    outputs = model.generate(
-                        **inputs, max_new_tokens=256,
-                        do_sample=True, temperature=0.7,
-                    )
-                response = tok.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-                print(f"AI: {response}\n")
+    # Resolve model_size: numeric or model ID
+    model_or_size = args.model_size
+    try:
+        model_or_size = float(args.model_size)
+    except ValueError:
+        pass  # it's a model ID string
 
+    if args.assume_size_gb:
+        model_or_size = args.assume_size_gb
+
+    # MoE path: use legacy planner directly
+    if args.moe:
+        _cmd_plan_legacy_moe(args)
+        return
+
+    result = do_plan(
+        model_or_size,
+        compare=args.compare,
+        trust_remote_code=getattr(args, "trust_remote_code", False),
+    )
+
+    if args.json_output:
+        import dataclasses
+        out = dataclasses.asdict(result)
+        print(json.dumps(out, indent=2, default=str))
+        return
+
+    # Detect model size for display
+    if result.model and result.model.estimated_sizes_gb:
+        fp16 = result.model.estimated_sizes_gb.get("fp16", 0)
+        if result.model.model_id and not result.model.model_id.replace(".", "").replace("-", "").isdigit():
+            print(f"\nDetected: {result.model.model_id} (~{fp16:.0f}GB fp16)")
+
+    # Hardware
+    if result.hardware and result.hardware.gpus:
+        gpu = result.hardware.gpus[0]
+        print(f"Hardware: {gpu.name} ({gpu.total_vram_gb:.0f}GB VRAM), {result.hardware.total_ram_gb:.0f}GB RAM")
+
+    if args.compare and result.strategies:
+        _print_compare_table(result)
+    elif result.recommended:
+        # Single strategy output
+        size_str = f"{model_or_size}" if isinstance(model_or_size, (int, float)) else result.model.model_id if result.model else str(model_or_size)
+        print(f"\n=== Recommended Strategy ===")
+        print(f"  {result.recommended.name}")
+        print(f"  Speed: {result.recommended.estimated_speed}")
+        print(f"  Est VRAM: {result.recommended.estimated_vram_gb:.1f}GB")
+        print(f"  Quality risk: {result.recommended.quality_risk}")
     else:
-        parser.print_help()
+        print("\nNo viable strategy found.")
 
+    # Reasoning
+    if result.explanation:
+        print(f"\n=== Reasoning ===")
+        for line in result.explanation:
+            print(f"  {line}")
+    print()
+
+
+def _print_compare_table(result):
+    print(f"\n=== Viable Strategies ===")
+    # Header
+    print(f"{'#':<3} {'Speed':<10} {'Strategy':<35} {'Est VRAM':>10} {'Quality Risk':<15}")
+    print("-" * 75)
+    for i, s in enumerate(result.strategies, 1):
+        if not s.viable:
+            continue
+        marker = " <- recommended" if s.recommended else ""
+        print(f"{i:<3} {s.estimated_speed:<10} {s.name:<35} {s.estimated_vram_gb:>8.1f}GB {s.quality_risk:<15}{marker}")
+
+    # Show rejected
+    rejected = [s for s in result.strategies if not s.viable]
+    if rejected:
+        print(f"\nRejected:")
+        for s in rejected:
+            print(f"  {s.name}: {s.rejection_reason}")
+
+
+def _cmd_plan_legacy_moe(args):
+    """Handle MoE planning using legacy strategy path."""
+    hw = detect_hardware()
+    model_size = float(args.model_size)
+
+    print("\n=== Hardware ===")
+    print(hw.summary())
+    print()
+
+    total_b, active_b, n_experts, n_active = float(args.moe[0]), float(args.moe[1]), int(args.moe[2]), int(args.moe[3])
+    shared_ratio = 0.30
+    moe_profile = MoEProfile(
+        total_params_b=total_b, active_params_b=active_b,
+        num_experts=n_experts, num_active_experts=n_active,
+        shared_layers_gb=model_size * shared_ratio,
+        expert_size_gb=model_size * (1.0 - shared_ratio),
+    )
+
+    strategy = pick_strategy(hw, model_size, prefer_speed=args.fast,
+                              allow_quantization=not args.no_quantize, moe=moe_profile)
+
+    print(f"=== Strategy for {model_size:.0f}GB model ===")
+    print(f"MoE: {total_b:.0f}B total, {active_b:.0f}B active, {n_experts} experts ({n_active} active)")
+    print(f"Sparsity: {moe_profile.sparsity_ratio:.0%}")
+    print()
+    print(strategy.summary(include_notes=False))
+
+    if strategy.notes:
+        print(f"\n=== Reasoning ===")
+        for n in strategy.notes:
+            print(f"  - {n}")
+
+    if strategy.llamacpp_flags:
+        print("\n=== llama.cpp Launch ===")
+        print("llama-server " + " ".join(strategy.llamacpp_flags) + " -m <model.gguf>")
+    print()
+
+
+def _cmd_doctor(args):
+    from .doctor import run as run_doctor
+
+    report = run_doctor(
+        model=args.model,
+        model_size_gb=args.model_size_gb,
+    )
+
+    if args.json_output:
+        import dataclasses
+        out = dataclasses.asdict(report)
+        print(json.dumps(out, indent=2, default=str))
+        return
+
+    print("\n=== OverflowML Doctor ===\n")
+
+    # Environment
+    print("Environment")
+    for k, v in report.environment.items():
+        print(f"  {k}: {v}")
+    print()
+
+    # Hardware
+    print("Hardware")
+    for k, v in report.hardware.items():
+        print(f"  {k}: {v}")
+    print()
+
+    # Issues / checks
+    if report.issues:
+        print("Checks")
+        pass_count = sum(1 for i in report.issues if i.severity == "info")
+        warn_count = sum(1 for i in report.issues if i.severity == "warn")
+        err_count = sum(1 for i in report.issues if i.severity == "error")
+
+        for issue in report.issues:
+            tag = {"info": "PASS", "warn": "WARN", "error": "FAIL"}[issue.severity]
+            print(f"  [{tag}] {issue.message}")
+            if issue.suggested_fix:
+                print(f"         Fix: {issue.suggested_fix}")
+
+        print(f"\n{pass_count} passed, {warn_count} warnings, {err_count} errors")
+    else:
+        print("No issues detected.")
+
+    # Fix commands
+    if report.fix_commands:
+        print(f"\nSuggested fixes:")
+        for cmd in report.fix_commands:
+            print(f"  {cmd}")
+    print()
+
+
+def _cmd_load(args):
+    if args.trust_remote_code:
+        print("WARNING: --trust-remote-code downloads and executes arbitrary Python "
+              "code from the model repository. Only use with models you trust.",
+              file=sys.stderr)
+    from .transformers_ext import load_model
+    model, tok = load_model(
+        args.model_name, model_size_gb=args.size,
+        trust_remote_code=args.trust_remote_code,
+    )
+    print(f"\nModel loaded: {args.model_name}")
+    print(f"Type: {type(model).__name__}")
+    if hasattr(model, "hf_device_map"):
+        devices = set(str(v) for v in model.hf_device_map.values())
+        print(f"Devices: {', '.join(sorted(devices))}")
+
+    if args.chat:
+        print("\n=== Chat (type 'quit' to exit) ===\n")
+        import torch
+        while True:
+            try:
+                user_input = input("You: ")
+            except (EOFError, KeyboardInterrupt):
+                break
+            if user_input.strip().lower() in ("quit", "exit", "q"):
+                break
+            inputs = tok(user_input, return_tensors="pt").to(model.device)
+            with torch.inference_mode():
+                outputs = model.generate(**inputs, max_new_tokens=256, do_sample=True, temperature=0.7)
+            response = tok.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+            print(f"AI: {response}\n")
+
+
+# ---- Benchmark (legacy) ----
 
 POPULAR_MODELS = [
-    # Consumer LLMs
     ("Llama-3.2-1B", 2.5),
     ("Llama-3.2-3B", 6.5),
     ("Nemotron-Mini-4B", 8),
@@ -197,7 +376,6 @@ POPULAR_MODELS = [
     ("Minitron-8B", 16),
     ("Nemotron-Nano-9B", 18),
     ("Llama-3.1-13B", 26),
-    # Multi-GPU LLMs
     ("Nemotron-3 Nano 30B (MoE)", 60),
     ("Nemotron-3 Super 120B (MoE)", 120),
     ("Qwen3.5-27B (Dense)", 54),
@@ -216,14 +394,11 @@ POPULAR_MODELS = [
     ("GLM-5 (MoE)", 1488),
     ("Kimi K2.5 (MoE)", 2000),
     ("Llama-3.1-405B", 810),
-    # Diffusers
     ("SDXL (diffusers)", 7),
     ("FLUX.1-dev (diffusers)", 24),
     ("Qwen-Image-Edit (diffusers)", 34),
-    # Voice/Speech (NeMo)
     ("Parakeet-0.6B (ASR)", 1.2),
     ("Canary-1B (ASR)", 2),
-    # Vision
     ("VILA-3B (Vision)", 6),
     ("VILA-8B (Vision)", 16),
     ("VILA-13B (Vision)", 26),
@@ -249,8 +424,6 @@ def _run_benchmark(args):
 
     for name, size_gb in models:
         s = pick_strategy(hw, size_gb)
-
-        # Build strategy label
         parts = []
         if s.quantization.value != "none":
             parts.append(s.quantization.value.upper())
@@ -262,7 +435,6 @@ def _run_benchmark(args):
             parts.append("compile")
         strategy_label = " + ".join(parts) if parts else "direct load"
 
-        # Status
         if s.warnings:
             status = "!! " + s.warnings[0][:40]
         elif s.distribution != DistributionMode.NONE and s.offload != OffloadMode.NONE:

@@ -76,7 +76,7 @@ class Strategy:
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
-    def summary(self) -> str:
+    def summary(self, include_notes: bool = True) -> str:
         parts = []
         if self.distribution != DistributionMode.NONE:
             parts.append(f"Distribution: {self.distribution.value} ({self.num_gpus_used} GPUs)")
@@ -92,8 +92,9 @@ class Strategy:
             parts.append(f"Estimated peak VRAM: {self.estimated_vram_gb:.1f}GB")
         for w in self.warnings:
             parts.append(f"WARNING: {w}")
-        for n in self.notes:
-            parts.append(f"  - {n}")
+        if include_notes:
+            for n in self.notes:
+                parts.append(f"  - {n}")
         return "\n".join(parts)
 
 
@@ -257,12 +258,14 @@ def pick_strategy(
         s.estimated_vram_gb = 3.0
         s.gc_between_steps = True
         int4_size = model_size_gb * 0.3
+        s.notes.append(f"Insufficient RAM ({ram:.0f}GB) for full model ({model_size_gb:.0f}GB) — INT4 reduces to ~{int4_size:.0f}GB")
         s.warnings.append(f"Model ({model_size_gb:.0f}GB) exceeds both VRAM and RAM — INT4 quantization to ~{int4_size:.0f}GB")
         return s
 
     s.offload = OffloadMode.DISK
     s.estimated_vram_gb = 3.0
     s.gc_between_steps = True
+    s.notes.append(f"Insufficient memory — model: {model_size_gb:.0f}GB, VRAM: {vram:.0f}GB, RAM: {ram:.0f}GB — disk offload as last resort")
     s.warnings.append(f"Insufficient memory. Model: {model_size_gb:.0f}GB, VRAM: {vram:.0f}GB, RAM: {ram:.0f}GB — disk offload required (very slow)")
     return s
 

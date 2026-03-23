@@ -1,17 +1,48 @@
 """OverflowML — Run AI models larger than your GPU."""
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
+# --- New public API (preferred) ---
+from . import doctor
+from .inspect import inspect_model
+from .core.planner import plan
+from .core.types import (
+    ModelInfo,
+    HardwareInfo,
+    StrategyCandidate,
+    PlanResult,
+    DoctorIssue,
+    DoctorReport,
+    CanRunResult,
+    GPUInfo,
+)
+
+# --- Legacy API (still supported) ---
 from .detect import detect_hardware, HardwareProfile
 from .strategy import pick_strategy, Strategy, DistributionMode, MoEProfile, plan_llamacpp, get_moe_profile, MOE_REGISTRY
 from .optimize import optimize_pipeline, optimize_model, MemoryGuard
+
 
 def load_model(*args, **kwargs):
     """Load a HuggingFace model with optimal memory strategy. Lazy import."""
     from .transformers_ext import load_model as _load
     return _load(*args, **kwargs)
 
+
 __all__ = [
+    # New API
+    "doctor",
+    "inspect_model",
+    "plan",
+    "ModelInfo",
+    "HardwareInfo",
+    "StrategyCandidate",
+    "PlanResult",
+    "DoctorIssue",
+    "DoctorReport",
+    "CanRunResult",
+    "GPUInfo",
+    # Legacy API
     "detect_hardware",
     "HardwareProfile",
     "pick_strategy",

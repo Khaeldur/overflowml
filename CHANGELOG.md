@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0] - 2026-03-23
+
+### Added
+- **New package structure**: `core/`, `inspect/`, `doctor/` subpackages with backward-compatible legacy shims
+- **`overflowml doctor`**: Environment health checker — detects CPU-only torch on GPU machines, missing deps, driver mismatches, model fit issues. Actionable fix commands for every problem. `--json` output for CI.
+- **`overflowml inspect <model_id>`**: Estimate model size from HuggingFace Hub without downloading weights. Uses safetensors index (exact) or config.json architecture estimation. Shows fp16/int8/int4 sizes + confidence.
+- **`overflowml plan <model_or_size>`**: Now accepts HuggingFace model IDs (auto-detects size) or numeric GB. `--assume-size-gb` for manual override.
+- **`--compare` mode**: Shows all viable strategies side-by-side with speed/VRAM/quality tradeoffs. Rejected strategies shown with reasons.
+- **`--json` on plan/inspect/doctor**: Machine-readable output for all major commands.
+- **Reasoning section**: Every plan output explains what was tried, what was rejected, and why — referencing specific known traps (FP8+offload on Windows, attention_slicing+sequential, expandable_segments on WDDM).
+- **New data contracts**: `ModelInfo`, `HardwareInfo`, `GPUInfo`, `StrategyCandidate`, `PlanResult`, `DoctorIssue`, `DoctorReport`, `CanRunResult`
+- **New public API**: `inspect_model()`, `plan()`, `doctor.run()` alongside legacy `detect_hardware()`, `pick_strategy()`, `optimize_pipeline()`
+- 56 new tests (148 total)
+
+### Changed
+- `Strategy.summary()` now accepts `include_notes` parameter for separating config from reasoning
+- Enriched notes on all `pick_strategy()` return paths (INT4, disk offload)
+
 ## [0.5.1] - 2026-03-23
 
 ### Security

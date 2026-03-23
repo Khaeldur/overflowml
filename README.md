@@ -118,28 +118,54 @@ for prompt in prompts:
         result.images[0].save(f"output.png")
 ```
 
-### CLI — Hardware Detection
+### CLI — Hardware Detection & Planning
 
 ```bash
 $ overflowml detect
-
 === OverflowML Hardware Detection ===
 Accelerator: cuda
 GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
 System RAM: 194GB
-Overflow capacity: 178GB (total effective: 210GB)
 BF16: yes | FP8: yes
 
-$ overflowml plan 40
+$ overflowml plan 40 --compare
+Hardware: NVIDIA GeForce RTX 5090 (32GB VRAM), 194GB RAM
 
-=== Strategy for 40GB model ===
-Offload: sequential_cpu
-Dtype: bfloat16
-GC cleanup: enabled (threshold 70%)
-Estimated peak VRAM: 3.0GB
-  → Sequential offload: 1 layer at a time (~3GB VRAM), model lives in 194GB RAM
-WARNING: FP8 incompatible with CPU offload on Windows
-WARNING: Do NOT enable attention_slicing with sequential offload
+=== Viable Strategies ===
+#  Speed     Strategy              Est VRAM  Quality Risk
+1  fastest   fp16 FP8              25.3GB    minimal       <- recommended
+2  medium    fp16 model cpu        28.0GB    none
+3  slow      fp16 sequential cpu   3.0GB     none
+
+Rejected:
+  fp16 direct load: exceeds VRAM (46.0GB > 32GB)
+
+=== Reasoning ===
+  fp16 weight footprint: 40.0 GB
+  Detected GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
+  FP8 reduces model to ~22GB — fits in VRAM
+  Known traps handled:
+    - FP8 + CPU offload crashes on Windows — FP8 only used without offload
+    - attention_slicing disabled with sequential offload
+    - expandable_segments disabled (Windows WDDM)
+```
+
+### Environment Diagnostics
+
+```bash
+$ overflowml doctor
+=== OverflowML Doctor ===
+Environment
+  Python: 3.11.8
+  Torch: 2.6.0+cu124
+Hardware
+  GPU: NVIDIA RTX 5090 (32GB)
+  System RAM: 196GB
+Checks
+  [PASS] PyTorch 2.6.0 (CUDA 12.4)
+  [PASS] GPU: NVIDIA RTX 5090 (32GB)
+  [WARN] torchao not installed
+         Fix: pip install overflowml[quantize]
 ```
 
 ### Standalone Model

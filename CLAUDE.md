@@ -7,21 +7,38 @@ PyPI: `overflowml` | GitHub: `Khaeldur/overflowml` | MIT license
 ## Architecture
 ```
 overflowml/
-├── detect.py          — Hardware detection (CUDA, ROCm, MPS, MLX, CPU)
-├── strategy.py        — Strategy engine (picks offload + quantization)
-├── optimize.py        — Applies strategy to diffusers pipelines and models
-├── transformers_ext.py — HuggingFace transformers integration (load_model)
-├── cli.py             — CLI: detect, plan, benchmark, load
-├── __init__.py        — Public API exports
-└── __main__.py        — python -m overflowml entry point
-tests/
-├── test_strategy.py   — Strategy decision tree + ROCm tests (24 tests)
-├── test_multi_gpu.py  — Multi-GPU distribution tests (19 tests)
-├── test_transformers.py — Transformers integration tests (7 tests)
-├── test_detect.py     — Hardware detection mocks (4 tests)
-├── test_optimize.py   — Device placement, MemoryGuard, param estimation (16 tests)
-├── test_cli.py        — CLI subprocess tests (10 tests)
-└── test_llamacpp.py   — plan_llamacpp + _max_memory_map (5 tests)
+├── __init__.py         — Public API: inspect_model, plan, doctor + legacy exports
+├── cli.py              — CLI: detect, inspect, plan, doctor, benchmark, load
+├── __main__.py         — python -m overflowml entry point
+├── core/
+│   ├── types.py        — Data contracts: ModelInfo, HardwareInfo, StrategyCandidate, PlanResult, etc.
+│   ├── hardware.py     — New hardware detection → HardwareInfo
+│   ├── planner.py      — plan(), compare_strategies() → PlanResult
+│   └── explain.py      — Gotcha-aware reasoning builder
+├── inspect/
+│   ├── hf_probe.py     — HF Hub metadata probing (no weight downloads)
+│   ├── model_estimator.py — inspect_model() → ModelInfo
+│   └── arch_registry.py — Architecture classification + param estimation
+├── doctor/
+│   ├── checks.py       — Individual health checks (torch, GPU, deps, driver, fit)
+│   └── report.py       — run() → DoctorReport
+├── detect.py           — Legacy shim → core.hardware
+├── strategy.py         — Strategy engine (unchanged, wrapped by planner)
+├── optimize.py         — Applies strategy to pipelines/models
+└── transformers_ext.py — HuggingFace transformers integration
+tests/ (148 tests)
+├── test_types.py       — Data contract tests
+├── test_hardware_new.py — New hardware detection tests
+├── test_inspect.py     — Model inspection + estimation tests
+├── test_planner.py     — Planner, compare, explanation tests
+├── test_doctor.py      — Doctor checks + CLI tests
+├── test_cli.py         — All CLI subprocess tests
+├── test_strategy.py    — Strategy decision tree tests
+├── test_multi_gpu.py   — Multi-GPU distribution tests
+├── test_transformers.py — Transformers integration tests
+├── test_detect.py      — ROCm detection tests
+├── test_optimize.py    — Device placement, MemoryGuard tests
+└── test_llamacpp.py    — plan_llamacpp + _max_memory_map tests
 ```
 
 ## Key Commands
