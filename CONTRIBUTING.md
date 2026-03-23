@@ -36,11 +36,13 @@ ruff check overflowml/
 
 ## Adding Hardware Support
 
-1. Add a detection function in `detect.py` (e.g., `_detect_rocm()`)
+1. Add detection logic in `detect.py` (ROCm is detected via `torch.version.hip` inside `_detect_cuda()` — not all accelerators need a separate function)
 2. Add the accelerator to the `Accelerator` enum
 3. Update `detect_hardware()` priority order
-4. Add strategy handling in `strategy.py`
-5. Add tests
+4. Add device placement in `optimize.py` (`_pick_device()`)
+5. Add strategy handling in `strategy.py` (dtype selection, offload paths)
+6. Add `_max_memory_map()` support in `transformers_ext.py`
+7. Add tests in `test_detect.py`, `test_strategy.py`, and `test_optimize.py`
 
 ## Reporting Issues
 

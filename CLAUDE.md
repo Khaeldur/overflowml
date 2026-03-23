@@ -7,15 +7,21 @@ PyPI: `overflowml` | GitHub: `Khaeldur/overflowml` | MIT license
 ## Architecture
 ```
 overflowml/
-├── detect.py          — Hardware detection (CUDA, MPS, MLX, ROCm, CPU)
+├── detect.py          — Hardware detection (CUDA, ROCm, MPS, MLX, CPU)
 ├── strategy.py        — Strategy engine (picks offload + quantization)
 ├── optimize.py        — Applies strategy to diffusers pipelines and models
 ├── transformers_ext.py — HuggingFace transformers integration (load_model)
 ├── cli.py             — CLI: detect, plan, benchmark, load
-└── __init__.py        — Public API exports
+├── __init__.py        — Public API exports
+└── __main__.py        — python -m overflowml entry point
 tests/
-├── test_strategy.py   — Strategy decision tree tests (20 tests)
-└── test_transformers.py — Transformers integration tests (5 tests)
+├── test_strategy.py   — Strategy decision tree + ROCm tests (24 tests)
+├── test_multi_gpu.py  — Multi-GPU distribution tests (19 tests)
+├── test_transformers.py — Transformers integration tests (7 tests)
+├── test_detect.py     — Hardware detection mocks (4 tests)
+├── test_optimize.py   — Device placement, MemoryGuard, param estimation (16 tests)
+├── test_cli.py        — CLI subprocess tests (10 tests)
+└── test_llamacpp.py   — plan_llamacpp + _max_memory_map (5 tests)
 ```
 
 ## Key Commands
