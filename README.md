@@ -316,6 +316,8 @@ If OverflowML saved you from an OOM crash, a [GitHub star](https://github.com/Kh
 
 Bug reports and PRs welcome — especially edge cases on unusual hardware configs.
 
+Need help optimizing AI inference for your team? [Get in touch](mailto:hello@hybridlab.ai).
+
 ## License
 
 MIT
