@@ -44,7 +44,7 @@ monitor = ["rich>=13.0"]
 ui = ["textual>=0.50"]
 metrics = ["prometheus-client>=0.20"]
 all = ["overflowml[hub,transformers,diffusers,quantize,bnb,monitor,ui]"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "pytest-asyncio", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/Khaeldur/overflowml"
