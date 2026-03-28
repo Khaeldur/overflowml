@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/overflowml)](https://pypi.org/project/overflowml/)
 [![Python](https://img.shields.io/pypi/pyversions/overflowml)](https://pypi.org/project/overflowml/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/Khaeldur/overflowml?style=social)](https://github.com/Khaeldur/overflowml)
 
 **Run AI models larger than your GPU.** One line of code.
 
@@ -308,6 +309,12 @@ Not an error — OverflowML skips compilation silently. On Windows, Triton requi
 
 **Slow generation with sequential offload**
 Sequential offload is intentionally slow (layers move one-at-a-time). Check `overflowml plan <size>` — if your RAM is large enough, it may suggest a faster strategy like `model_cpu_offload`.
+
+## Contributing & Support
+
+If OverflowML saved you from an OOM crash, a [GitHub star](https://github.com/Khaeldur/overflowml) helps others find it.
+
+Bug reports and PRs welcome — especially edge cases on unusual hardware configs.
 
 ## License
 
