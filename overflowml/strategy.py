@@ -506,6 +506,10 @@ MOE_REGISTRY: dict[str, MoEProfile] = {
         total_params_b=120, active_params_b=12, num_experts=128, num_active_experts=8,
         shared_layers_gb=0, expert_size_gb=0,
     ),
+    "nemotron-3 nano": MoEProfile(
+        total_params_b=30, active_params_b=6, num_experts=64, num_active_experts=4,
+        shared_layers_gb=0, expert_size_gb=0,
+    ),
 }
 
 

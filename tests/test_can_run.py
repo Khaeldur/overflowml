@@ -20,8 +20,8 @@ class TestCanRun:
         assert result.ok is False
 
     def test_max_offload_none_rejects_offload(self):
-        # 40GB model on CPU-only torch won't fit without offload
-        result = can_run(40.0, max_offload="none")
+        # 200GB model won't fit without offload on any consumer GPU
+        result = can_run(200.0, max_offload="none")
         assert result.ok is False
 
     def test_returns_hardware_info(self):

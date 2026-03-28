@@ -13,7 +13,7 @@ import warnings as _w
 with _w.catch_warnings():
     _w.simplefilter("ignore", DeprecationWarning)
     from .detect import detect_hardware
-    from .strategy import DistributionMode, MoEProfile, OffloadMode, pick_strategy, plan_llamacpp
+    from .strategy import DistributionMode, MoEProfile, OffloadMode, pick_strategy, plan_llamacpp, get_moe_profile
 
 
 def main():
@@ -560,7 +560,8 @@ def _run_benchmark(args):
     print("-" * len(header))
 
     for name, size_gb in models:
-        s = pick_strategy(hw, size_gb)
+        moe = get_moe_profile(name, size_gb) if "(MoE)" in name else None
+        s = pick_strategy(hw, size_gb, moe=moe)
         parts = []
         if s.quantization.value != "none":
             parts.append(s.quantization.value.upper())
@@ -582,6 +583,8 @@ def _run_benchmark(args):
             status = "FAST"
         elif s.offload == OffloadMode.LAYER_HYBRID:
             status = "HYBRID (GPU+RAM)"
+        elif s.offload == OffloadMode.EXPERT_OFFLOAD:
+            status = "MoE EXPERT OFFLOAD"
         elif s.offload == OffloadMode.MODEL_CPU:
             status = "OK (offload)"
         elif s.offload == OffloadMode.SEQUENTIAL_CPU:
