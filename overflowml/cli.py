@@ -33,7 +33,24 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     # --- detect
-    sub.add_parser("detect", help="Detect hardware and show capabilities")
+    det = sub.add_parser("detect", help="Detect hardware and show capabilities")
+    det.add_argument("--live", action="store_true",
+                     help="Show live free VRAM, GPU processes, CPU load, RAM (via nvidia-smi, no CUDA init)")
+    det.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON (with --live)")
+
+    # --- llamacpp
+    lcp = sub.add_parser("llamacpp", help="Plan llama-server flags for a GGUF model against live free VRAM")
+    lcp.add_argument("gguf", help="Path to a .gguf model file")
+    lcp.add_argument("--ctx", type=int, default=8192, help="Context size (-c), default 8192")
+    lcp.add_argument("--vram-budget", type=float, default=None,
+                     help="VRAM budget in GB (default: live free VRAM minus --reserve-gb)")
+    lcp.add_argument("--reserve-gb", type=float, default=1.5,
+                     help="Headroom left for other GPU jobs' allocation spikes (default 1.5)")
+    lcp.add_argument("--idle", action="store_true",
+                     help="Plan for an idle GPU (total VRAM) instead of what is free now")
+    lcp.add_argument("--gpu", type=int, default=0, help="GPU index (default 0)")
+    lcp.add_argument("--binary", default="llama-server", help="llama-server path for the printed command")
+    lcp.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
 
     # --- inspect
     insp = sub.add_parser("inspect", help="Inspect a model and estimate memory footprint")
@@ -116,7 +133,12 @@ def main():
 
     # --- Dispatch ---
     if args.command == "detect":
-        _cmd_detect()
+        if args.live:
+            _cmd_detect_live(args)
+        else:
+            _cmd_detect()
+    elif args.command == "llamacpp":
+        _cmd_llamacpp(args)
     elif args.command == "inspect":
         _cmd_inspect(args)
     elif args.command == "plan":
@@ -177,6 +199,80 @@ def _cmd_detect():
     print(hw.summary())
     print(f"\nFor a model that needs loading, run:")
     print(f"  overflowml plan <model_or_size>")
+    print()
+
+
+def _cmd_detect_live(args):
+    import dataclasses
+    from .core.live import live_state
+    st = live_state()
+
+    if args.json_output:
+        out = dataclasses.asdict(st)
+        for g, d in zip(st.gpus, out["gpus"]):
+            d["free_gb"] = round(g.free_gb, 2)
+        print(json.dumps(out, indent=2))
+        return
+
+    print("\n=== OverflowML Live State ===")
+    if not st.gpus:
+        print("GPU: none visible (nvidia-smi / torch)")
+    for g in st.gpus:
+        print(f"GPU {g.index}: {g.name} — {g.used_gb:.1f}/{g.total_gb:.1f}GB used, "
+              f"{g.free_gb:.1f}GB free, {g.util_pct:.0f}% util")
+    for p in st.gpu_processes:
+        print(f"  pid {p['pid']:>7}  {p['used_gb']:5.1f}GB  {p['name']}")
+    print(f"RAM: {st.ram_available_gb:.0f}/{st.ram_total_gb:.0f}GB available")
+    print(f"CPU: {st.cpu_busy:.0%} busy ({st.cpu_physical} cores / {st.cpu_logical} threads)")
+    if st.is_wsl:
+        print("Platform: WSL2")
+    if st.wsl_cuda_lib_dir:
+        print(f"WARNING: set LD_LIBRARY_PATH={st.wsl_cuda_lib_dir} for CUDA programs "
+              "(Linux NVIDIA package shadows the WSL driver's ptxjitcompiler)")
+    print()
+
+
+def _cmd_llamacpp(args):
+    import dataclasses
+    from .core.live import live_state
+    from .core.llamacpp_plan import plan_gguf
+    from .inspect.gguf import read_gguf
+
+    info = read_gguf(args.gguf)
+    st = live_state()
+    gpu = next((g for g in st.gpus if g.index == args.gpu), None)
+    if args.vram_budget is not None:
+        budget, basis = args.vram_budget, "--vram-budget"
+    elif gpu is None:
+        budget, basis = 0.0, "no GPU visible"
+    elif args.idle:
+        budget, basis = gpu.total_gb - args.reserve_gb, f"idle GPU ({gpu.total_gb:.1f}GB) - reserve"
+    else:
+        budget, basis = gpu.free_gb - args.reserve_gb, f"live free ({gpu.free_gb:.1f}GB) - reserve"
+    budget = max(0.0, budget)
+
+    p = plan_gguf(info, budget, ctx=args.ctx, ram_available_gb=st.ram_available_gb,
+                  cpu_busy=st.cpu_busy, cpu_physical=st.cpu_physical, wsl_cuda_lib_dir=st.wsl_cuda_lib_dir)
+
+    if args.json_output:
+        out = dataclasses.asdict(p)
+        out.update(command=p.command(args.binary), budget_basis=basis,
+                   model={"name": info.name, "arch": info.architecture, "layers": info.n_layers,
+                          "experts": info.n_experts, "experts_used": info.n_experts_used,
+                          "weights_gb": round(info.weights_bytes / 1024**3, 2)})
+        print(json.dumps(out, indent=2))
+        return
+
+    kind = f"MoE {info.n_experts} experts ({info.n_experts_used} active)" if info.is_moe else "dense"
+    print(f"\nModel: {info.name or args.gguf} [{info.architecture}, {info.n_layers} layers, {kind}, "
+          f"{info.weights_bytes / 1024**3:.1f}GB]")
+    print(f"VRAM budget: {budget:.1f}GB ({basis})")
+    print(f"Mode: {p.mode}")
+    print(f"\n{p.command(args.binary)}\n")
+    for n in p.notes:
+        print(f"  - {n}")
+    for w in p.warnings:
+        print(f"  WARNING: {w}")
     print()
 
 

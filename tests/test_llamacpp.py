@@ -97,3 +97,191 @@ class TestMaxMemoryMap:
         hw = make_hw(gpu_vram_gb=24, gpu_vram_gbs=[24.0], system_ram_gb=0)
         mem = _max_memory_map(hw)
         assert "cpu" not in mem  # no CPU allocation when 0 RAM
+
+
+# ---- GGUF reader + live-budget llama.cpp planner ----
+
+import json as _json
+import struct as _struct
+import subprocess as _subprocess
+import sys as _sys
+
+import pytest as _pytest
+
+from overflowml.core import live as _live
+from overflowml.core.llamacpp_plan import plan_gguf
+from overflowml.inspect.gguf import read_gguf
+
+MB = 1024**2
+
+
+def _gguf_str(s):
+    b = s.encode()
+    return _struct.pack("<Q", len(b)) + b
+
+
+def write_gguf(path, arch, n_layers, layer_tensors, meta_extra=None):
+    """Minimal GGUF v3: metadata + tensor table + zero-filled data. layer_tensors: {suffix: bytes}."""
+    meta = {"general.architecture": (8, arch), "general.name": (8, "Test"), "general.alignment": (4, 32),
+            f"{arch}.block_count": (4, n_layers), f"{arch}.embedding_length": (4, 1024),
+            f"{arch}.attention.head_count": (4, 8), f"{arch}.attention.head_count_kv": (4, 2),
+            f"{arch}.context_length": (4, 32768)}
+    meta.update(meta_extra or {})
+    tensors = [("token_embd.weight", 4 * MB)]
+    for b in range(n_layers):
+        lt = layer_tensors(b) if callable(layer_tensors) else layer_tensors
+        tensors += [(f"blk.{b}.{sfx}", size) for sfx, size in lt.items()]
+    tensors += [("output_norm.weight", 32), ("output.weight", 4 * MB)]
+
+    out = bytearray(b"GGUF" + _struct.pack("<IQQ", 3, len(tensors), len(meta)))
+    for k, (t, v) in meta.items():
+        out += _gguf_str(k) + _struct.pack("<I", t)
+        out += _gguf_str(v) if t == 8 else _struct.pack("<I", v)
+    off = 0
+    for name, size in tensors:
+        out += _gguf_str(name) + _struct.pack("<I", 1) + _struct.pack("<Q", size) + _struct.pack("<IQ", 0, off)
+        off += (size + 31) // 32 * 32
+    out += b"\0" * ((-len(out)) % 32)
+    with open(path, "wb") as f:
+        f.write(out)
+        f.truncate(len(out) + off)
+    return path
+
+
+@_pytest.fixture
+def dense_gguf(tmp_path):
+    return write_gguf(tmp_path / "dense.gguf", "llama", 10,
+                      {"attn_k.weight": 8 * MB, "attn_q.weight": 32 * MB, "ffn_up.weight": 60 * MB})
+
+
+@_pytest.fixture
+def moe_gguf(tmp_path):
+    return write_gguf(tmp_path / "moe.gguf", "qwen3moe", 8,
+                      {"attn_k.weight": 8 * MB, "ffn_up_exps.weight": 200 * MB, "ffn_down_exps.weight": 200 * MB},
+                      {"qwen3moe.expert_count": (4, 64), "qwen3moe.expert_used_count": (4, 4)})
+
+
+class TestReadGGUF:
+    def test_dense_sizes(self, dense_gguf):
+        i = read_gguf(dense_gguf)
+        assert i.architecture == "llama" and i.n_layers == 10 and not i.is_moe
+        assert i.layer_bytes[0] == 100 * MB
+        assert i.embed_bytes == 4 * MB
+        assert i.output_bytes == 4 * MB + 32
+        assert i.n_kv_layers == 10 and i.key_length == 128
+
+    def test_moe_expert_split(self, moe_gguf):
+        i = read_gguf(moe_gguf)
+        assert i.is_moe and i.n_experts == 64 and i.n_experts_used == 4
+        assert i.layer_expert_bytes == [400 * MB] * 8
+
+    def test_hybrid_ssm_layers_have_no_kv(self, tmp_path):
+        # Qwen3.5/3.6 layout: linear-attention blocks carry attn_qkv + ssm_*, every 4th block has attn_k
+        def layer(b):
+            if b % 4 == 3:
+                return {"attn_k.weight": MB, "attn_q.weight": MB}
+            return {"attn_qkv.weight": MB, "ssm_out.weight": MB}
+        i = read_gguf(write_gguf(tmp_path / "hyb.gguf", "qwen35", 8, layer))
+        assert i.n_kv_layers == 2
+
+    def test_not_gguf(self, tmp_path):
+        p = tmp_path / "x.gguf"
+        p.write_bytes(b"NOPE" + b"\0" * 64)
+        with _pytest.raises(ValueError):
+            read_gguf(p)
+
+
+class TestPlanGGUF:
+    def test_full_gpu_when_budget_large(self, dense_gguf):
+        p = plan_gguf(read_gguf(dense_gguf), 24, ctx=4096)
+        assert p.mode == "full_gpu" and p.kv_cache_type == "f16"
+        assert p.flags[p.flags.index("-ngl") + 1] == "11"
+        assert "-t" not in p.flags
+
+    def test_moe_offloads_minimum_expert_layers(self, moe_gguf):
+        i = read_gguf(moe_gguf)
+        p = plan_gguf(i, 2.5, ctx=4096)
+        assert p.mode == "moe_expert_offload"
+        assert 0 < p.n_cpu_moe < i.n_layers
+        assert p.est_vram_gb <= 2.5
+        tighter = plan_gguf(i, 1.5, ctx=4096)
+        assert tighter.n_cpu_moe > p.n_cpu_moe
+        assert "--n-cpu-moe" in p.flags
+
+    def test_dense_partial_layers(self, dense_gguf):
+        p = plan_gguf(read_gguf(dense_gguf), 0.9, ctx=4096)
+        assert p.mode == "partial_layers"
+        assert 0 < p.n_gpu_layers < 10
+        assert any("CPU speed" in w for w in p.warnings)
+
+    def test_cpu_only_when_no_budget(self, dense_gguf):
+        p = plan_gguf(read_gguf(dense_gguf), 0.0)
+        assert p.mode == "cpu_only" and p.n_gpu_layers == 0
+        assert p.flags[p.flags.index("-dev") + 1] == "none"
+        assert p.vram_full_gpu_gb > 1.0
+
+    def test_busy_cpu_warns_only_when_offloading(self, moe_gguf):
+        i = read_gguf(moe_gguf)
+        assert any("busy" in w for w in plan_gguf(i, 1.5, cpu_busy=0.8, cpu_physical=16).warnings)
+        assert not any("busy" in w for w in plan_gguf(i, 24, cpu_busy=0.8, cpu_physical=16).warnings)
+
+    def test_threads_scale_with_free_cpu(self, moe_gguf):
+        p = plan_gguf(read_gguf(moe_gguf), 1.5, cpu_busy=0.5, cpu_physical=16)
+        assert p.flags[p.flags.index("-t") + 1] == "8"
+
+    def test_wsl_env_in_command(self, dense_gguf):
+        p = plan_gguf(read_gguf(dense_gguf), 24, wsl_cuda_lib_dir="/usr/lib/wsl/drivers/nv_x")
+        assert p.command().startswith("LD_LIBRARY_PATH=/usr/lib/wsl/drivers/nv_x llama-server")
+
+
+class TestLiveState:
+    def test_parses_nvidia_smi(self, monkeypatch):
+        monkeypatch.setattr(_live, "_nvidia_smi", lambda a: [["0", "RTX 5090", "32607", "27000", "98"]])
+        gpus, src = _live.query_gpus()
+        assert src == "nvidia-smi"
+        assert round(gpus[0].free_gb, 2) == round((32607 - 27000) / 1024, 2)
+
+    def test_wsl_fix_none_off_wsl(self, monkeypatch):
+        monkeypatch.setattr(_live, "is_wsl", lambda: False)
+        assert _live.detect_wsl_cuda_fix() is None
+
+    def test_wsl_fix_found(self, monkeypatch, tmp_path):
+        drv = tmp_path / "drivers" / "nv_dispi.inf_x"
+        drv.mkdir(parents=True)
+        (drv / "libcuda.so.1.1").write_bytes(b"")
+        (drv / "libnvidia-ptxjitcompiler.so.1").write_bytes(b"")
+        linux_lib = tmp_path / "libnvidia-ptxjitcompiler.so.1"
+        linux_lib.write_bytes(b"")
+        monkeypatch.setattr(_live, "is_wsl", lambda: True)
+        monkeypatch.setattr(_live, "WSL_DRIVERS", tmp_path / "drivers")
+        monkeypatch.setattr(_live, "LINUX_PTXJIT", [linux_lib])
+        monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+        assert _live.detect_wsl_cuda_fix() == str(drv)
+        monkeypatch.setenv("LD_LIBRARY_PATH", str(drv))
+        assert _live.detect_wsl_cuda_fix() is None
+
+
+class TestLegacyPlanLlamaCppDetect:
+    def test_hw_none_uses_detection(self, monkeypatch):
+        import overflowml.strategy as st
+        monkeypatch.setattr(st, "detect_hardware", lambda: make_hw(gpu_vram_gb=24))
+        assert "-ngl" in plan_llamacpp("m.gguf")["command"]
+
+
+class TestLlamaCppCLI:
+    def test_json_with_budget(self, moe_gguf):
+        r = _subprocess.run([_sys.executable, "-m", "overflowml", "llamacpp", str(moe_gguf),
+                             "--vram-budget", "2.5", "--ctx", "4096", "--json"],
+                            capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        out = _json.loads(r.stdout)
+        assert out["mode"] == "moe_expert_offload"
+        assert out["budget_basis"] == "--vram-budget"
+        assert "--n-cpu-moe" in out["command"]
+
+    def test_detect_live_json(self):
+        r = _subprocess.run([_sys.executable, "-m", "overflowml", "detect", "--live", "--json"],
+                            capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        out = _json.loads(r.stdout)
+        assert "gpus" in out and "cpu_busy" in out

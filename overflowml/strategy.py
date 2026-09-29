@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from .detect import Accelerator, HardwareProfile
+from .detect import Accelerator, HardwareProfile, detect_hardware
 
 
 class OffloadMode(Enum):
