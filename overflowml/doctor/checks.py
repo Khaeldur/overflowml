@@ -182,13 +182,14 @@ def check_model_fit(model: Optional[str], model_size_gb: Optional[float]) -> Opt
 
     if model and not size:
         try:
-            from ..inspect import estimate_size_gb
-            size = estimate_size_gb(model)
-            model_label = f"{model} (~{size:.0f}GB fp16)"
-        except Exception:
+            from ..inspect import inspect_model, planning_size_gb, size_label
+            info = inspect_model(model)
+            size = planning_size_gb(info)
+            model_label = f"{model} (~{size:.0f}GB {size_label(info)})"
+        except Exception as e:
             return DoctorIssue(
                 code="model_unknown", severity="warn",
-                message=f"Could not estimate size for {model}",
+                message=f"Could not estimate size for {model}: {e}",
             )
 
     if not size:

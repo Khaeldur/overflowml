@@ -53,6 +53,8 @@ class ModelInfo:
     source: str = "unknown"
     confidence: Literal["low", "medium", "high"] = "low"
     notes: list[str] = field(default_factory=list)
+    # Stored weights are already quantized: sizes are "native" bytes, re-quantizing won't help
+    prequantized: bool = False
 
 
 @dataclass
@@ -103,3 +105,5 @@ class CanRunResult:
     recommended_strategy: Optional[str] = None
     detected_vram_gb: float = 0.0
     detected_ram_gb: float = 0.0
+    # Set when the check itself couldn't run, e.g. a ModelSizeUnknown reason
+    error: Optional[str] = None

@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Every Hub model was sized at half its real size.** `safetensors.total` is a parameter count, not bytes; it was halved (Qwen2.5-7B showed 3.8B params / 7.1 GB instead of 7.6B / 14.2 GiB), so `plan`, `can-run` and `doctor --model` recommended loads that OOM. Sizes now come from per-dtype parameter counts x bytes-per-dtype.
+- **Unknown models no longer silently become 14 GB.** Typos, nonexistent repos (including the old `meta-llama/Llama-3-70B` help example) and unreachable Hubs raise `ModelSizeUnknown` (a `ValueError`) with a reason: `not_found`, `gated`, `offline`, `no_metadata`, `missing_dependency`. `plan`, `inspect` and `load` exit 2 with the message.
+- **`can-run` exit codes**: 0 = can run, 1 = can't run, 2 = couldn't check. `--json` now exits non-zero too (it always exited 0). `CanRunResult.error` carries the reason.
+- `can_run(max_offload=...)` rejects unknown values instead of treating them as `layer_hybrid`; `expert_offload` added to the CLI choices.
+- `load_model()` used a second config-only estimator (defaults 4096/32/32000, no MoE: Qwen3-30B-A3B = 6 GB). It now uses `inspect_model`.
+- Config-based estimate handles grouped-query attention, tied embeddings, nested `text_config` and `moe_intermediate_size` (Qwen3-30B-A3B: 233B -> 30.5B).
+- `plan --assume-size-gb 0` was ignored; non-positive sizes are now rejected.
+- Cached model sizes from older versions are discarded (model cache schema 2).
+
+### Added
+- Pre-quantized checkpoints (bnb U8, GPTQ/AWQ I32, FP8, MXFP4) are detected (`ModelInfo.prequantized`) and sized from their safetensors headers (`estimated_sizes_gb["native"]`) — the Hub's `parameters` counts packed weights as unpacked params (Qwen2.5-7B-AWQ: 5.19 GiB, not 26). `plan` and `can_run` no longer suggest re-quantizing them.
+- Local model directories are sized from safetensors headers (no weights read), honouring `model.safetensors.index.json` and skipping Mistral `consolidated.safetensors` duplicates; corrupt / git-lfs pointer files raise `ModelSizeUnknown`. Local paths bypass the model cache.
+- Diffusers repos are flagged (only the main component is counted; confidence medium).
+- `plan --json` / `inspect --json` print a JSON error object on `ModelSizeUnknown`; `inspect` exits 2 when no size is found; the TUI shows ERROR (not NO) when a check couldn't run. NaN sizes are rejected.
+- Offline fallbacks are never cached, and a quantized config without safetensors metadata raises instead of producing an fp16 estimate.
+- `planning_size_gb(info)` helper; `ModelSizeUnknown` exported from `overflowml`.
+
+### Changed
+- `huggingface_hub>=0.24` is now a core dependency (the `hub` extra is kept as a no-op).
+- `estimate_size_gb()` raises `ModelSizeUnknown` instead of returning 14.0.
+
 ## [0.13.0] - 2026-09-29
 
 ### Added

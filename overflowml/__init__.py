@@ -4,7 +4,7 @@ __version__ = "0.13.0"
 
 # --- New public API (preferred) ---
 from . import doctor
-from .inspect import inspect_model
+from .inspect import inspect_model, ModelSizeUnknown
 from .core.planner import plan
 from .core.can_run import can_run
 from .monitor import Monitor, MetricsExporter
@@ -39,6 +39,7 @@ __all__ = [
     # New API
     "doctor",
     "inspect_model",
+    "ModelSizeUnknown",
     "plan",
     "can_run",
     "Monitor",
