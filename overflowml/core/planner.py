@@ -55,6 +55,9 @@ def plan(
 
     Returns:
         PlanResult with recommended strategy, all candidates, and explanation.
+
+    Raises:
+        ModelSizeUnknown: a model ID whose size can't be determined.
     """
     result = PlanResult()
 
@@ -69,14 +72,10 @@ def plan(
         try:
             model_size_gb = float(model_or_size)
         except ValueError:
-            from ..inspect import inspect_model
+            from ..inspect import inspect_model, planning_size_gb
             model_info = inspect_model(model_or_size, trust_remote_code)
             result.model = model_info
-            if model_info.estimated_sizes_gb and "fp16" in model_info.estimated_sizes_gb:
-                model_size_gb = model_info.estimated_sizes_gb["fp16"]
-            else:
-                model_size_gb = 14.0
-                logger.warning("Could not estimate size for %s — using 14GB default", model_or_size)
+            model_size_gb = planning_size_gb(model_info)
     else:
         model_size_gb = float(model_or_size)
 
@@ -93,8 +92,8 @@ def plan(
     # Convert to legacy hw for pick_strategy
     legacy_hw = hardware_info_to_legacy(hw)
 
-    # Generate candidates
-    candidates = _generate_candidates(legacy_hw, model_size_gb)
+    # Generate candidates (re-quantizing a pre-quantized checkpoint shrinks nothing)
+    candidates = _generate_candidates(legacy_hw, model_size_gb, allow_quantization=not model_info.prequantized)
     result.strategies = candidates
 
     # Pick recommended
@@ -118,7 +117,7 @@ def plan(
     return result
 
 
-def _generate_candidates(legacy_hw, model_size_gb: float) -> list[StrategyCandidate]:
+def _generate_candidates(legacy_hw, model_size_gb: float, allow_quantization: bool = True) -> list[StrategyCandidate]:
     """Generate all candidate strategies by calling pick_strategy with different params."""
     from ..strategy import DistributionMode, OffloadMode, QuantMode, pick_strategy
 
@@ -134,12 +133,15 @@ def _generate_candidates(legacy_hw, model_size_gb: float) -> list[StrategyCandid
 
     # Force specific offload modes
     for mode in [OffloadMode.NONE, OffloadMode.MODEL_CPU, OffloadMode.LAYER_HYBRID, OffloadMode.SEQUENTIAL_CPU]:
-        configs.append({"force_offload": mode})
+        configs.append({"force_offload": mode, "allow_quantization": allow_quantization})
 
     # Force quantization modes
-    if legacy_hw.supports_fp8:
-        configs.append({"force_quant": QuantMode.FP8})
-    configs.append({"force_quant": QuantMode.INT4})
+    if allow_quantization:
+        if legacy_hw.supports_fp8:
+            configs.append({"force_quant": QuantMode.FP8})
+        configs.append({"force_quant": QuantMode.INT4})
+    else:
+        configs = [c for c in configs if c.get("allow_quantization") is False]
 
     for cfg in configs:
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Optional, Union
 
 from .types import CanRunResult, HardwareInfo
@@ -38,35 +39,45 @@ def can_run(
     Returns:
         CanRunResult with ok, reason, and hardware info.
     """
+    if max_offload not in _OFFLOAD_SEVERITY:
+        raise ValueError(f"max_offload must be one of {', '.join(_OFFLOAD_SEVERITY)}, got {max_offload!r}")
+
     if hw is None:
         hw = detect_hardware_info()
 
     # Resolve model size
+    prequantized = False
     if isinstance(model_or_size, str):
         try:
             model_size_gb = float(model_or_size)
         except ValueError:
+            from ..inspect import ModelSizeUnknown, inspect_model, planning_size_gb
             try:
-                from ..inspect import estimate_size_gb
-                model_size_gb = estimate_size_gb(model_or_size, trust_remote_code)
+                info = inspect_model(model_or_size, trust_remote_code)
+                model_size_gb = planning_size_gb(info)
+                prequantized = info.prequantized
             except Exception as e:
                 return CanRunResult(
                     ok=False,
-                    reason=f"Could not estimate size for '{model_or_size}': {e}",
+                    reason=str(e) if isinstance(e, ModelSizeUnknown) else f"Could not estimate size for '{model_or_size}': {e}",
                     detected_vram_gb=hw.total_vram_gb,
                     detected_ram_gb=hw.total_ram_gb,
+                    error=e.reason if isinstance(e, ModelSizeUnknown) else "size_estimate_failed",
                 )
     else:
         model_size_gb = float(model_or_size)
 
+    if not math.isfinite(model_size_gb) or model_size_gb <= 0:
+        raise ValueError(f"model size must be a positive number, got {model_size_gb}")
+
     # Get strategy via legacy path
     legacy_hw = hardware_info_to_legacy(hw)
     from ..strategy import pick_strategy
-    s = pick_strategy(legacy_hw, model_size_gb)
+    s = pick_strategy(legacy_hw, model_size_gb, allow_quantization=not prequantized)
 
     # Check offload severity
     strategy_severity = _OFFLOAD_SEVERITY.get(s.offload.value, 3)
-    max_severity = _OFFLOAD_SEVERITY.get(max_offload, 2)
+    max_severity = _OFFLOAD_SEVERITY[max_offload]
 
     if s.offload.value == "disk":
         return CanRunResult(
@@ -77,7 +88,7 @@ def can_run(
         )
 
     # Even with INT4+sequential, check if quantized model exceeds RAM
-    int4_size = model_size_gb * 0.3
+    int4_size = model_size_gb if prequantized else model_size_gb * 0.3
     if int4_size > hw.total_ram_gb and s.offload.value == "sequential_cpu":
         return CanRunResult(
             ok=False,

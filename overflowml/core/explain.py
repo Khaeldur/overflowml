@@ -26,7 +26,10 @@ def build_explanation(
     if model_info and model_info.param_count:
         params_b = model_info.param_count / 1e9
         lines.append(f"Model estimated at {params_b:.1f}B params ({model_info.source})")
-    lines.append(f"fp16 weight footprint: {model_size_gb:.1f} GB")
+    if model_info and model_info.prequantized:
+        lines.append(f"Weight footprint (pre-quantized, as stored): {model_size_gb:.1f} GB")
+    else:
+        lines.append(f"fp16 weight footprint: {model_size_gb:.1f} GB")
 
     # Hardware
     if hw_info.gpus:

@@ -37,7 +37,7 @@ class TestPlan:
         recommended = [s for s in result.strategies if s.recommended]
         assert len(recommended) == 1
 
-    @patch("overflowml.inspect.model_estimator.inspect_model")
+    @patch("overflowml.inspect.inspect_model")
     def test_plan_model_id(self, mock_inspect):
         from overflowml.core.types import ModelInfo
         mock_inspect.return_value = ModelInfo(
@@ -131,3 +131,26 @@ class TestBuildExplanation:
         lines = build_explanation(10.0, hw, rec, [rec])
         text = "\n".join(lines)
         assert "Known traps handled:" in text
+
+
+class TestPlanUnknownSize:
+    @patch("overflowml.inspect.inspect_model")
+    def test_model_without_size_raises(self, mock_inspect):
+        # Used to plan a silent 14GB default
+        import pytest
+        from overflowml.core.types import ModelInfo
+        from overflowml.inspect import ModelSizeUnknown
+        mock_inspect.return_value = ModelInfo(model_id="test/model")
+        with pytest.raises(ModelSizeUnknown):
+            plan("test/model")
+
+    @patch("overflowml.inspect.inspect_model")
+    def test_prequantized_model_gets_no_quantization_candidates(self, mock_inspect):
+        from overflowml.core.types import ModelInfo
+        mock_inspect.return_value = ModelInfo(
+            model_id="org/awq", estimated_sizes_gb={"native": 40.0}, prequantized=True,
+        )
+        result = plan("org/awq", make_hw(), compare=True)
+        names = [c.name for c in result.strategies]
+        assert names
+        assert not any("FP8" in n or "INT4" in n or "INT8" in n for n in names)

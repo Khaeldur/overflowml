@@ -226,7 +226,7 @@ def _get_app_class():
             try:
                 from overflowml.core.can_run import can_run
                 result = can_run(model)
-                status = "YES" if result.ok else "NO"
+                status = "YES" if result.ok else ("ERROR" if result.error else "NO")
                 log.write_line(f"  {status}: {result.reason}")
                 if result.recommended_strategy:
                     log.write_line(f"  Strategy: {result.recommended_strategy}")

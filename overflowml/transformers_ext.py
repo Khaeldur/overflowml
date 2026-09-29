@@ -31,18 +31,19 @@ def load_model(
         import overflowml
 
         # Automatic — detects hardware, picks strategy, loads model
-        model, tokenizer = overflowml.load_model("meta-llama/Llama-3-70B")
+        model, tokenizer = overflowml.load_model("Qwen/Qwen2.5-7B-Instruct")
 
         # With options
         model, tokenizer = overflowml.load_model(
-            "meta-llama/Llama-3-70B",
-            model_size_gb=140,  # optional: override auto-detection
+            "Qwen/Qwen2.5-72B-Instruct",
+            model_size_gb=145,  # optional: override auto-detection
             prefer_speed=True,
         )
 
     Args:
         model_name: HuggingFace model ID or local path
-        model_size_gb: Model size in GB (BF16). Auto-estimated from config if not provided.
+        model_size_gb: Model size in GB (BF16). Auto-detected from safetensors metadata if not
+            provided; raises ModelSizeUnknown when it can't be determined.
         hw: Hardware profile. Auto-detected if not provided.
         strategy: Pre-computed strategy. Auto-computed if not provided.
         model_class: Specific model class (e.g., AutoModelForCausalLM). Auto-detected if None.
@@ -62,7 +63,8 @@ def load_model(
         hw = detect_hardware()
 
     if model_size_gb is None:
-        model_size_gb = _estimate_from_config(model_name, trust_remote_code)
+        from .inspect import estimate_size_gb
+        model_size_gb = estimate_size_gb(model_name, trust_remote_code)
 
     if strategy is None:
         strategy = pick_strategy(
@@ -172,34 +174,6 @@ def load_model(
         model_name, trust_remote_code=trust_remote_code
     )
     return model, tok
-
-
-def _estimate_from_config(model_name: str, trust_remote_code: bool = False) -> float:
-    """Estimate model size from HuggingFace config without downloading weights."""
-    try:
-        from transformers import AutoConfig
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-
-        num_params = getattr(config, "num_parameters", None)
-        if num_params is None:
-            hidden = getattr(config, "hidden_size", 4096)
-            layers = getattr(config, "num_hidden_layers", 32)
-            vocab = getattr(config, "vocab_size", 32000)
-            intermediate = getattr(config, "intermediate_size", hidden * 4)
-            # Rough estimate: embedding + layers * (attn + ffn) + lm_head
-            num_params = (
-                vocab * hidden  # embeddings
-                + layers * (4 * hidden * hidden + 3 * hidden * intermediate)  # layers
-                + vocab * hidden  # lm_head
-            )
-
-        # BF16 = 2 bytes per param
-        size_gb = (num_params * 2) / (1024 ** 3)
-        logger.info("Estimated model size: %.1fGB (%.1fB params)", size_gb, num_params / 1e9)
-        return max(size_gb, 0.5)
-    except Exception as e:
-        logger.warning("Could not estimate model size from config: %s — defaulting to 14GB", e)
-        return 14.0
 
 
 def _detect_model_class(model_name: str, trust_remote_code: bool = False):

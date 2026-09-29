@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import math
 import sys
 
 if sys.platform == "win32":
@@ -22,12 +23,12 @@ def main():
         description="OverflowML — Run AI models larger than your GPU",
         epilog="Examples:\n"
                "  overflowml detect\n"
-               "  overflowml inspect meta-llama/Llama-3-70B\n"
+               "  overflowml inspect Qwen/Qwen2.5-72B-Instruct\n"
                "  overflowml plan 40\n"
-               "  overflowml plan meta-llama/Llama-3-70B --compare\n"
+               "  overflowml plan Qwen/Qwen2.5-72B-Instruct --compare\n"
                "  overflowml doctor\n"
                "  overflowml benchmark --custom 70 140\n"
-               "  overflowml load meta-llama/Llama-3-8B --chat\n",
+               "  overflowml load Qwen/Qwen2.5-7B-Instruct --chat\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
@@ -54,7 +55,7 @@ def main():
 
     # --- inspect
     insp = sub.add_parser("inspect", help="Inspect a model and estimate memory footprint")
-    insp.add_argument("model_id", help="HuggingFace model ID (e.g., meta-llama/Llama-3-70B)")
+    insp.add_argument("model_id", help="HuggingFace model ID or local path (e.g., Qwen/Qwen2.5-72B-Instruct)")
     insp.add_argument("--trust-remote-code", action="store_true")
     insp.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
 
@@ -81,7 +82,7 @@ def main():
     canrun = sub.add_parser("can-run", help="Check if a model can run on this hardware (CI/CD gating)")
     canrun.add_argument("model_size", type=str, help="Model size in GB or HuggingFace model ID")
     canrun.add_argument("--max-offload", type=str, default="sequential_cpu",
-                        choices=["none", "model_cpu", "layer_hybrid", "sequential_cpu", "disk"],
+                        choices=["none", "model_cpu", "expert_offload", "layer_hybrid", "sequential_cpu", "disk"],
                         help="Maximum acceptable offload mode (default: sequential_cpu)")
     canrun.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
     canrun.add_argument("--trust-remote-code", action="store_true")
@@ -114,7 +115,7 @@ def main():
 
     # --- load
     load = sub.add_parser("load", help="Load a HuggingFace model with optimal strategy")
-    load.add_argument("model_name", help="HuggingFace model ID (e.g., meta-llama/Llama-3-8B)")
+    load.add_argument("model_name", help="HuggingFace model ID or local path (e.g., Qwen/Qwen2.5-7B-Instruct)")
     load.add_argument("--size", type=float, default=None, help="Model size in GB (auto-estimated if omitted)")
     load.add_argument("--chat", action="store_true", help="Start interactive chat after loading")
     load.add_argument("--trust-remote-code", action="store_true", help="Trust remote code")
@@ -126,6 +127,8 @@ def main():
     # --- Validation ---
     if args.command == "plan":
         _validate_plan_args(args, parser)
+    if args.command == "can-run":
+        _validate_size_arg(args.model_size, parser)
     if args.command == "benchmark" and hasattr(args, "custom") and args.custom:
         for size in args.custom:
             if size <= 0:
@@ -166,14 +169,27 @@ def main():
         parser.print_help()
 
 
-def _validate_plan_args(args, parser):
-    # Check if model_size is numeric
+def _validate_size_arg(model_size, parser):
     try:
-        size = float(args.model_size)
-        if size <= 0:
-            parser.error("model size must be positive")
+        size = float(model_size)
     except ValueError:
-        pass  # it's a model ID, validated later
+        return  # it's a model ID, validated later
+    if not math.isfinite(size) or size <= 0:
+        parser.error("model size must be a positive number")
+
+
+def _exit_size_unknown(e, json_output=False):
+    if json_output:
+        print(json.dumps({"error": e.reason, "message": str(e), "model_id": e.model_id}, indent=2))
+    else:
+        print(f"\nError: {e}", file=sys.stderr)
+    sys.exit(2)
+
+
+def _validate_plan_args(args, parser):
+    _validate_size_arg(args.model_size, parser)
+    if args.assume_size_gb is not None and not (math.isfinite(args.assume_size_gb) and args.assume_size_gb > 0):
+        parser.error("--assume-size-gb must be positive")
 
     if args.moe:
         # MoE requires numeric model_size
@@ -277,13 +293,18 @@ def _cmd_llamacpp(args):
 
 
 def _cmd_inspect(args):
-    from .inspect import inspect_model
-    info = inspect_model(args.model_id, trust_remote_code=args.trust_remote_code)
+    from .inspect import ModelSizeUnknown, inspect_model
+    try:
+        info = inspect_model(args.model_id, trust_remote_code=args.trust_remote_code)
+    except ModelSizeUnknown as e:
+        _exit_size_unknown(e, args.json_output)
+    # Exit 2 when no size was found, matching plan/can-run
+    exit_code = 0 if info.estimated_sizes_gb else 2
 
     if args.json_output:
         import dataclasses
         print(json.dumps(dataclasses.asdict(info), indent=2))
-        return
+        sys.exit(exit_code)
 
     print(f"\nModel: {info.model_id}")
     if info.architecture:
@@ -302,6 +323,8 @@ def _cmd_inspect(args):
         for n in info.notes:
             print(f"  {n}")
     print()
+    if exit_code:
+        sys.exit(exit_code)
 
 
 def _cmd_plan(args):
@@ -314,7 +337,7 @@ def _cmd_plan(args):
     except ValueError:
         pass  # it's a model ID string
 
-    if args.assume_size_gb:
+    if args.assume_size_gb is not None:
         model_or_size = args.assume_size_gb
 
     # MoE path: use legacy planner directly
@@ -322,12 +345,16 @@ def _cmd_plan(args):
         _cmd_plan_legacy_moe(args)
         return
 
-    result = do_plan(
-        model_or_size,
-        compare=args.compare,
-        trust_remote_code=getattr(args, "trust_remote_code", False),
-        lora_size_gb=getattr(args, "lora_size_gb", None),
-    )
+    from .inspect import ModelSizeUnknown
+    try:
+        result = do_plan(
+            model_or_size,
+            compare=args.compare,
+            trust_remote_code=getattr(args, "trust_remote_code", False),
+            lora_size_gb=getattr(args, "lora_size_gb", None),
+        )
+    except ModelSizeUnknown as e:
+        _exit_size_unknown(e, args.json_output)
 
     if args.json_output:
         import dataclasses
@@ -337,9 +364,10 @@ def _cmd_plan(args):
 
     # Detect model size for display
     if result.model and result.model.estimated_sizes_gb:
-        fp16 = result.model.estimated_sizes_gb.get("fp16", 0)
+        from .inspect import planning_size_gb, size_label
+        size = planning_size_gb(result.model)
         if result.model.model_id and not result.model.model_id.replace(".", "").replace("-", "").isdigit():
-            print(f"\nDetected: {result.model.model_id} (~{fp16:.0f}GB fp16)")
+            print(f"\nDetected: {result.model.model_id} (~{size:.0f}GB {size_label(result.model)})")
 
     # Hardware
     if result.hardware and result.hardware.gpus:
@@ -550,19 +578,22 @@ def _cmd_can_run(args):
         trust_remote_code=getattr(args, "trust_remote_code", False),
     )
 
+    # Exit codes: 0 = can run, 1 = can't run, 2 = couldn't check (e.g. unknown model size)
+    exit_code = 2 if result.error else (0 if result.ok else 1)
+
     if args.json_output:
         import dataclasses
         print(json.dumps(dataclasses.asdict(result), indent=2, default=str))
-        return
+        sys.exit(exit_code)
 
-    status = "YES" if result.ok else "NO"
+    status = "YES" if result.ok else ("ERROR" if result.error else "NO")
     print(f"\n{status}: {result.reason}")
     if result.recommended_strategy:
         print(f"Strategy: {result.recommended_strategy}")
     print(f"Hardware: {result.detected_vram_gb:.0f}GB VRAM, {result.detected_ram_gb:.0f}GB RAM")
 
-    if not result.ok:
-        sys.exit(1)
+    if exit_code:
+        sys.exit(exit_code)
     print()
 
 
@@ -571,11 +602,15 @@ def _cmd_load(args):
         print("WARNING: --trust-remote-code downloads and executes arbitrary Python "
               "code from the model repository. Only use with models you trust.",
               file=sys.stderr)
+    from .inspect import ModelSizeUnknown
     from .transformers_ext import load_model
-    model, tok = load_model(
-        args.model_name, model_size_gb=args.size,
-        trust_remote_code=args.trust_remote_code,
-    )
+    try:
+        model, tok = load_model(
+            args.model_name, model_size_gb=args.size,
+            trust_remote_code=args.trust_remote_code,
+        )
+    except ModelSizeUnknown as e:
+        _exit_size_unknown(e)
     print(f"\nModel loaded: {args.model_name}")
     print(f"Type: {type(model).__name__}")
     if hasattr(model, "hf_device_map"):

@@ -26,7 +26,7 @@ overflowml/
 ├── strategy.py         — Strategy engine (unchanged, wrapped by planner)
 ├── optimize.py         — Applies strategy to pipelines/models
 └── transformers_ext.py — HuggingFace transformers integration
-tests/ (148 tests)
+tests/ (292 tests)
 ├── test_types.py       — Data contract tests
 ├── test_hardware_new.py — New hardware detection tests
 ├── test_inspect.py     — Model inspection + estimation tests
@@ -90,6 +90,6 @@ Apple Silicon: unified memory, no offloading needed if model < 75% RAM.
 - Version must be updated in BOTH __init__.py AND pyproject.toml
 
 ## Dependencies
-Core: torch, psutil
+Core: torch, psutil, huggingface_hub
 Optional: transformers, accelerate, diffusers, torchao, bitsandbytes, mlx
 Dev: pytest, ruff

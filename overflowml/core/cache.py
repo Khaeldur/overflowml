@@ -14,6 +14,8 @@ logger = logging.getLogger("overflowml")
 
 CACHE_DIR = Path(os.environ.get("OVERFLOWML_CACHE_DIR", os.path.expanduser("~/.cache/overflowml")))
 CACHE_TTL_SECONDS = 3600  # 1 hour default
+# Bump when ModelInfo sizing changes; 2 = sizes from safetensors parameter counts (was halved)
+MODEL_CACHE_SCHEMA = 2
 
 
 def _cache_dir() -> Path:
@@ -72,7 +74,7 @@ def load_cached_model(model_id: str) -> Optional[dict]:
         return None
     try:
         data = json.loads(path.read_text())
-        if data.get("_version") != _version_tag():
+        if data.get("_version") != _version_tag() or data.get("_schema") != MODEL_CACHE_SCHEMA:
             return None
         age = time.time() - data.get("_timestamp", 0)
         if age > CACHE_TTL_SECONDS:
@@ -85,6 +87,7 @@ def load_cached_model(model_id: str) -> Optional[dict]:
 def save_cached_model(model_id: str, model_dict: dict) -> None:
     """Save model info to cache."""
     model_dict["_version"] = _version_tag()
+    model_dict["_schema"] = MODEL_CACHE_SCHEMA
     model_dict["_timestamp"] = time.time()
     key = _make_key("model", model_id)
     path = _cache_dir() / f"model_{key}.json"
