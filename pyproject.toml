@@ -49,7 +49,7 @@ dev = ["pytest", "pytest-asyncio", "ruff"]
 [project.urls]
 Homepage = "https://github.com/Khaeldur/overflowml"
 Repository = "https://github.com/Khaeldur/overflowml"
-Changelog = "https://github.com/Khaeldur/overflowml/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/Khaeldur/overflowml/blob/master/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/Khaeldur/overflowml/issues"
 
 [project.scripts]
