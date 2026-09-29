@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.0] - 2026-09-29
+
+### Added
+- **`overflowml llamacpp <model.gguf>`**: llama-server flag planner sized to *live free* VRAM (minus `--reserve-gb`, default 1.5), or `--idle` / `--vram-budget GB`. Picks full GPU → q8_0 KV → MoE `--n-cpu-moe N` / dense partial `-ngl` → CPU-only (`-dev none`). `--json` output includes `vram_full_gpu_gb`, `gpu_share_of_active_weights`, env and warnings.
+- **GGUF reader** (`overflowml.inspect.gguf.read_gguf`): header + tensor table only, no dependencies. Exact per-layer / per-expert byte sizes, KV-layer count (hybrid Gated DeltaNet layers excluded).
+- **`overflowml detect --live [--json]`**: free VRAM per GPU, utilisation, GPU processes, available RAM, CPU load via nvidia-smi — no CUDA init, works without torch.
+- **WSL2 gotcha detection**: Linux NVIDIA userspace package shadowing the WSL driver's ptxjitcompiler (CUDA aborts with `free(): invalid pointer`); plans add the `LD_LIBRARY_PATH` fix.
+
+### Fixed
+- `plan_llamacpp()` without `hw` raised `NameError` (missing `detect_hardware` import).
+
 ## [0.12.0] - 2026-03-23
 
 ### Added

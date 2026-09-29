@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overflowml"
-version = "0.12.0"
+version = "0.13.0"
 description = "Run AI models larger than your GPU. Auto-detects hardware and applies optimal memory strategy."
 readme = "README.md"
 license = "MIT"
@@ -54,6 +54,13 @@ Changelog = "https://github.com/Khaeldur/overflowml/blob/main/CHANGELOG.md"
 
 [project.scripts]
 overflowml = "overflowml.cli:main"
+
+# Metadata 2.5 (hatchling default) is rejected by twine/packaging in use; 2.4 is universally accepted
+[tool.hatch.build.targets.wheel]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 
 [tool.ruff]
 line-length = 100

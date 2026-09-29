@@ -244,6 +244,31 @@ Estimated peak VRAM: 14.8GB
   - MoE expert offload + INT4: 36GB total in RAM, 15GB active on GPU
 ```
 
+## llama.cpp on a Shared GPU — Plan Against *Free* VRAM
+
+Training jobs, other servers and notebooks share the card, so "fits in 32GB" is the wrong question.
+`overflowml llamacpp` reads the GGUF header (real per-layer and per-expert sizes, KV layers) and sizes
+`llama-server` flags to the VRAM that is free **right now** (minus a reserve):
+
+```bash
+$ overflowml detect --live            # free VRAM, CPU load, RAM (nvidia-smi, no CUDA init)
+$ overflowml llamacpp model.gguf --ctx 16384 [--idle | --vram-budget 12] [--json]
+```
+
+Candidate order: whole model on GPU → q8_0 KV cache → MoE `--n-cpu-moe N` (dense: partial `-ngl`) →
+CPU-only with `-dev none` (plain `-ngl 0` still takes ~1GB VRAM). Plans report `vram_full_gpu_gb`
+(what to wait for) and warn when CPU-side weights compete with a busy CPU. On WSL2 it also detects the
+Linux NVIDIA package that makes every CUDA program abort with `free(): invalid pointer` and adds the
+`LD_LIBRARY_PATH` fix to the command.
+
+Measured on an RTX 5090 (Qwen3.6-35B-A3B Q4_K_M, 16k ctx) — offloading runs, scheduling is faster:
+
+| Placement | VRAM | Generation |
+|---|---|---|
+| Whole model on GPU (idle GPU) | ~20GB | ~230 tok/s |
+| `--n-cpu-moe 14` (planner pick, ~15GB free) | ~14GB | 7–13 tok/s |
+| All experts in RAM, CPU busy with other jobs | ~2GB | 2–3 tok/s |
+
 ## Known Incompatibilities
 
 These are automatically handled by OverflowML's strategy engine:
