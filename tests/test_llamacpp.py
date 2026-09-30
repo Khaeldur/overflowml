@@ -285,3 +285,160 @@ class TestLlamaCppCLI:
         assert r.returncode == 0, r.stderr
         out = _json.loads(r.stdout)
         assert "gpus" in out and "cpu_busy" in out
+
+
+# --- Split GGUF + hostile-file hardening ---------------------------------------------------
+
+from overflowml.inspect.gguf import GGUFError as _GGUFError
+
+
+def _gguf_bytes(meta, tensors, version=3):
+    """Raw GGUF: meta {key: (type, value)} with u32/string values, tensors [(name, size)]."""
+    out = bytearray(b"GGUF" + _struct.pack("<IQQ", version, len(tensors), len(meta)))
+    for k, (t, v) in meta.items():
+        out += _gguf_str(k) + _struct.pack("<I", t)
+        out += _gguf_str(v) if t == 8 else _struct.pack("<I", v)
+    off = 0
+    for name, size in tensors:
+        out += _gguf_str(name) + _struct.pack("<I", 1) + _struct.pack("<Q", size) + _struct.pack("<IQ", 0, off)
+        off += (size + 31) // 32 * 32
+    out += b"\0" * ((-len(out)) % 32)
+    return bytes(out), off
+
+
+def write_split(tmp_path, n_layers=12, n_shards=3, layer_mb=100):
+    """Dense model split llama.cpp-style: shard 1 has the metadata, every shard has a slice of the tensors."""
+    paths = []
+    per = n_layers // n_shards
+    for s in range(n_shards):
+        tensors = [("token_embd.weight", 4 * MB)] if s == 0 else []
+        tensors += [(f"blk.{b}.ffn_up.weight", layer_mb * MB) for b in range(s * per, (s + 1) * per)]
+        if s == n_shards - 1:
+            tensors.append(("output.weight", 4 * MB))
+        meta = {"split.no": (4, s), "split.count": (4, n_shards)}
+        if s == 0:
+            meta.update({"general.architecture": (8, "llama"), "general.alignment": (4, 32),
+                         "llama.block_count": (4, n_layers), "llama.embedding_length": (4, 1024),
+                         "llama.attention.head_count": (4, 8), "llama.attention.head_count_kv": (4, 2)})
+        header, data = _gguf_bytes(meta, tensors)
+        p = tmp_path / f"model-{s + 1:05d}-of-{n_shards:05d}.gguf"
+        with open(p, "wb") as f:
+            f.write(header)
+            f.truncate(len(header) + data)
+        paths.append(p)
+    return paths
+
+
+class TestSplitGGUF:
+    def test_shards_are_summed(self, tmp_path):
+        paths = write_split(tmp_path)
+        i = read_gguf(paths[0])
+        assert len(i.shards) == 3
+        assert i.layer_bytes == [100 * MB] * 12
+        assert i.weights_bytes == 12 * 100 * MB + 8 * MB
+
+    def test_any_shard_reads_the_whole_model(self, tmp_path):
+        paths = write_split(tmp_path)
+        assert read_gguf(paths[2]).weights_bytes == read_gguf(paths[0]).weights_bytes
+        assert read_gguf(paths[2]).n_layers == 12
+
+    def test_missing_shard_fails_closed(self, tmp_path):
+        paths = write_split(tmp_path)
+        paths[1].unlink()
+        with _pytest.raises(_GGUFError, match="missing"):
+            read_gguf(paths[0])
+
+    def test_split_model_never_plans_from_first_shard(self, tmp_path):
+        # Regression: MiniMax 4 shards (123 GB) planned as full_gpu at 4.4 GB from shard 1 alone
+        i = read_gguf(write_split(tmp_path, layer_mb=1000)[0])
+        p = plan_gguf(i, 4.0, ctx=4096, ram_available_gb=64)
+        assert p.mode != "full_gpu"
+
+    def test_cli_missing_shard_exits_2(self, tmp_path):
+        import json as _json
+        import subprocess as _sp
+        import sys as _sys
+        paths = write_split(tmp_path)
+        paths[2].unlink()
+        r = _sp.run([_sys.executable, "-m", "overflowml", "llamacpp", str(paths[0]), "--vram-budget", "8", "--json"],
+                    capture_output=True, text=True)
+        assert r.returncode == 2
+        assert _json.loads(r.stdout)["error"] == "gguf"
+
+
+def _hostile(tmp_path, body, name="evil.gguf"):
+    p = tmp_path / name
+    p.write_bytes(body)
+    return p
+
+
+def _assert_fails_small(path, max_mb=16):
+    import tracemalloc
+    tracemalloc.start()
+    try:
+        with _pytest.raises(_GGUFError):
+            read_gguf(path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < max_mb * MB, f"peak {peak / MB:.0f} MB"
+
+
+class TestHostileGGUF:
+    """PoCs from the red-team review, kept as regressions: each must fail fast without big allocations."""
+
+    def _header(self, n_tensors, n_kv):
+        return b"GGUF" + _struct.pack("<IQQ", 3, n_tensors, n_kv)
+
+    def test_block_count_bomb(self, tmp_path):
+        # A 106-byte file with block_count=2**30 drove RSS to ~83 GB
+        body, _ = _gguf_bytes({"general.architecture": (8, "llama"), "llama.block_count": (4, 2**30)}, [])
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_u64_block_count_bomb(self, tmp_path):
+        body = self._header(0, 2) + _gguf_str("general.architecture") + _struct.pack("<I", 8) + _gguf_str("llama")
+        body += _gguf_str("llama.block_count") + _struct.pack("<IQ", 10, 2**34)
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_scalar_array_bomb(self, tmp_path):
+        # 49-byte file forced a ~2 GB read before the n<=4096 guard
+        body = self._header(0, 1) + _gguf_str("k") + _struct.pack("<IIQ", 9, 10, 2**40)
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_string_length_bomb(self, tmp_path):
+        body = self._header(0, 1) + _struct.pack("<Q", 2**40)
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_deeply_nested_arrays(self, tmp_path):
+        body = self._header(0, 1) + _gguf_str("k") + _struct.pack("<I", 9)
+        body += _struct.pack("<IQ", 9, 1) * 5000 + _struct.pack("<IQ", 4, 0)
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_huge_kv_count(self, tmp_path):
+        _assert_fails_small(_hostile(tmp_path, self._header(0, 10**18)))
+
+    def test_huge_tensor_count(self, tmp_path):
+        _assert_fails_small(_hostile(tmp_path, self._header(10**18, 0)))
+
+    def test_zero_alignment(self, tmp_path):
+        body, _ = _gguf_bytes({"general.architecture": (8, "llama"), "general.alignment": (4, 0)}, [])
+        _assert_fails_small(_hostile(tmp_path, body))
+
+    def test_truncated_metadata(self, tmp_path, dense_gguf):
+        data = open(dense_gguf, "rb").read()
+        _assert_fails_small(_hostile(tmp_path, data[:60], "trunc.gguf"))
+
+    def test_tensor_data_past_end_of_file(self, tmp_path):
+        # A partially downloaded shard: the tensor table points beyond the file
+        header, _ = _gguf_bytes({"general.architecture": (8, "llama"), "llama.block_count": (4, 1)},
+                                [("blk.0.ffn_up.weight", 100 * MB)])
+        body = header + b"\0" * 64  # data section cut short
+        header2, _ = _gguf_bytes({"general.architecture": (8, "llama"), "llama.block_count": (4, 1)},
+                                 [("blk.0.a", 32), ("blk.0.b", 32)])
+        # second tensor's offset (32) is past a 16-byte data section
+        _assert_fails_small(_hostile(tmp_path, header2 + b"\0" * 16, "cut.gguf"))
+        read_gguf(_hostile(tmp_path, body, "ok.gguf"))  # a single tensor to EOF is fine (size = what's there)
+
+    def test_valid_files_still_parse(self, dense_gguf, moe_gguf):
+        assert read_gguf(dense_gguf).n_layers == 10
+        assert read_gguf(moe_gguf).is_moe

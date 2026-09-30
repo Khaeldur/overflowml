@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixed
+- **Split GGUF models were planned from the first shard only.** `overflowml llamacpp MiniMax-M2.5-…-00001-of-00004.gguf` said `full_gpu` at 4.4 GB for a 123 GB model. Every shard's tensor table is now read and summed (any shard can be passed); a missing shard fails with exit 2 instead of planning a partial model.
+- **Hostile or corrupt GGUF files could exhaust memory.** A 106-byte file with a huge `block_count` drove RSS to ~83 GB; a 49-byte file forced a 2 GB read. Every count, length, nesting depth and the alignment are now checked against the bytes left in the file before anything is read or allocated; malformed files raise `GGUFError` (a `ValueError`) and `llamacpp` exits 2 with the reason (JSON error under `--json`).
 - **Every Hub model was sized at half its real size.** `safetensors.total` is a parameter count, not bytes; it was halved (Qwen2.5-7B showed 3.8B params / 7.1 GB instead of 7.6B / 14.2 GiB), so `plan`, `can-run` and `doctor --model` recommended loads that OOM. Sizes now come from per-dtype parameter counts x bytes-per-dtype.
 - **Unknown models no longer silently become 14 GB.** Typos, nonexistent repos (including the old `meta-llama/Llama-3-70B` help example) and unreachable Hubs raise `ModelSizeUnknown` (a `ValueError`) with a reason: `not_found`, `gated`, `offline`, `no_metadata`, `missing_dependency`. `plan`, `inspect` and `load` exit 2 with the message.
 - **`can-run` exit codes**: 0 = can run, 1 = can't run, 2 = couldn't check. `--json` now exits non-zero too (it always exited 0). `CanRunResult.error` carries the reason.
