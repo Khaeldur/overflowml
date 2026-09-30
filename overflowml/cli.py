@@ -252,9 +252,16 @@ def _cmd_llamacpp(args):
     import dataclasses
     from .core.live import live_state
     from .core.llamacpp_plan import plan_gguf
-    from .inspect.gguf import read_gguf
+    from .inspect.gguf import GGUFError, read_gguf
 
-    info = read_gguf(args.gguf)
+    try:
+        info = read_gguf(args.gguf)
+    except GGUFError as e:
+        if args.json_output:
+            print(json.dumps({"error": "gguf", "message": str(e)}, indent=2))
+        else:
+            print(f"\nError: {e}", file=sys.stderr)
+        sys.exit(2)
     st = live_state()
     gpu = next((g for g in st.gpus if g.index == args.gpu), None)
     if args.vram_budget is not None:
@@ -275,13 +282,13 @@ def _cmd_llamacpp(args):
         out.update(command=p.command(args.binary), budget_basis=basis,
                    model={"name": info.name, "arch": info.architecture, "layers": info.n_layers,
                           "experts": info.n_experts, "experts_used": info.n_experts_used,
-                          "weights_gb": round(info.weights_bytes / 1024**3, 2)})
+                          "weights_gb": round(info.weights_bytes / 1024**3, 2), "shards": len(info.shards)})
         print(json.dumps(out, indent=2))
         return
 
     kind = f"MoE {info.n_experts} experts ({info.n_experts_used} active)" if info.is_moe else "dense"
     print(f"\nModel: {info.name or args.gguf} [{info.architecture}, {info.n_layers} layers, {kind}, "
-          f"{info.weights_bytes / 1024**3:.1f}GB]")
+          f"{info.weights_bytes / 1024**3:.1f}GB" + (f", {len(info.shards)} shards" if len(info.shards) > 1 else "") + "]")
     print(f"VRAM budget: {budget:.1f}GB ({basis})")
     print(f"Mode: {p.mode}")
     print(f"\n{p.command(args.binary)}\n")
